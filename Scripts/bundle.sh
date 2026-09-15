@@ -34,6 +34,9 @@ echo "==> Assembling $APP_NAME.app…"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR"
 cp "$BIN_PATH" "$MACOS_DIR/$BIN_NAME"
+mkdir -p "$APP_DIR/Contents/Resources"
+cp "$ROOT_DIR/LICENSE" "$ROOT_DIR/THIRD-PARTY-LICENSES.txt" \
+   "$ROOT_DIR/LICENSE-FasterSwiper.txt" "$APP_DIR/Contents/Resources/"
 
 # Strip symbols from the SHIPPED copy (not the .build artifact) BEFORE signing —
 # stripping mutates the binary and would invalidate a prior signature. -rSTx

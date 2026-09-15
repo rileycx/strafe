@@ -1,7 +1,8 @@
 // CStrafe.c — implementation of the synthetic dock-swipe mechanism.
 //
-// An independent reimplementation of the technique from
-// jurplel/InstantSpaceSwitcher (MIT). Every magic number here is documented in
+// Legacy technique from jurplel/InstantSpaceSwitcher (MIT); macOS 27 synthesis
+// adapted from pinned ISS and FasterSwiper. See THIRD-PARTY-LICENSES.txt.
+// Legacy magic numbers are documented in
 // docs/SPEC.md §1–2. Treat the field indices and event-type values as
 // version-fragile (SPEC §7).
 
@@ -12,6 +13,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <float.h>
 #include <string.h>
+#include <unistd.h>
+#include "EventSerialization.h"
 
 // --- Private CGEventField indices (SPEC §1.2) -----------------------------
 static const CGEventField kCGSEventTypeField           = (CGEventField)55;   // private CGSEventType selector
@@ -61,34 +64,70 @@ bool strafe_cgs_available(void) {
 }
 
 // --- Synthesis (SPEC §1.5) ------------------------------------------------
-static bool post_dock_swipe(CGSGesturePhase phase, StrafeDirection direction, double velocity) {
-    const bool isRight = (direction == StrafeDirectionRight);
+// Modified from pinned ISS ISS.c; see THIRD-PARTY-LICENSES.txt.
+static const int64_t kStrafeEventMarker = INT64_C(0x5354524146450001);
+
+CGEventRef strafe_create_switch_event(StrafeDirection direction, double velocity,
+                                     int64_t phase, bool augmented, bool inverted) {
+    if ((direction != StrafeDirectionLeft && direction != StrafeDirectionRight) ||
+        (phase != 1 && phase != 2 && phase != 4 && phase != 8) ||
+        !isfinite(velocity) || velocity < 0 || velocity > FLT_MAX) return NULL;
+    const bool isRight = (direction == StrafeDirectionRight) != inverted;
     // Empirically, ±FLT_TRUE_MIN used in this way makes switching instant.
-    const double progress = isRight ? (double)FLT_TRUE_MIN : -(double)FLT_TRUE_MIN;
+    const double magnitude = augmented ? 0.000016 : (double)FLT_TRUE_MIN;
+    const double progress = isRight ? magnitude : -magnitude;
 
     // Velocity of gesture based on speed setting.
     const double vel = isRight ? velocity : -velocity;
+    int32_t fixed;
+    // Validate even before Ended so an entire sequence can be prebuilt safely.
+    if (augmented && !strafe_fixed(vel, &fixed)) return NULL;
 
     CGEventRef ev = CGEventCreate(NULL);
-    if (!ev) { return false; }
+    if (!ev) { return NULL; }
+    CGEventSetIntegerValueField(ev, kCGEventSourceUserData, kStrafeEventMarker);
+    CGEventSetIntegerValueField(ev, kCGEventSourceUnixProcessID, getpid());
     CGEventSetIntegerValueField(ev, kCGSEventTypeField,            kCGSEventDockControl);
     CGEventSetIntegerValueField(ev, kCGEventGestureHIDType,        kIOHIDEventTypeDockSwipe);
     CGEventSetIntegerValueField(ev, kCGEventGesturePhase,          phase);
     CGEventSetDoubleValueField (ev, kCGEventGestureSwipeProgress,  progress);
     CGEventSetIntegerValueField(ev, kCGEventGestureSwipeMotion,    kCGGestureMotionHorizontal);
-    CGEventSetDoubleValueField (ev, kCGEventGestureSwipeVelocityX, vel);
-    CGEventSetDoubleValueField (ev, kCGEventGestureSwipeVelocityY, vel);
-    CGEventPost(kCGSessionEventTap, ev);
-    CFRelease(ev);
-    return true;
+    if (augmented) {
+        CGEventSetIntegerValueField(ev, (CGEventField)134, phase);
+        CGEventSetDoubleValueField(ev, (CGEventField)125, 0.1);
+        CGEventSetDoubleValueField(ev, (CGEventField)138, 3.0);
+        CGEventSetDoubleValueField(ev, (CGEventField)169, (double)mach_absolute_time());
+        if (phase == kCGSGesturePhaseEnded)
+            CGEventSetDoubleValueField(ev, kCGEventGestureSwipeVelocityX, vel);
+        CGEventRef result = strafe_augment(ev);
+        CFRelease(ev);
+        // CGEventCreateData omits source user data on macOS 27. Stamp AFTER
+        // reconstruction too, so every event returned to the scheduler is marked.
+        if (result) {
+            CGEventSetIntegerValueField(result, kCGEventSourceUserData, kStrafeEventMarker);
+            CGEventSetIntegerValueField(result, kCGEventSourceUnixProcessID, getpid());
+        }
+        return result;
+    }
+    CGEventSetDoubleValueField(ev, kCGEventGestureSwipeVelocityX, vel);
+    CGEventSetDoubleValueField(ev, kCGEventGestureSwipeVelocityY, vel);
+    return ev;
 }
 
 bool strafe_post_switch_gesture(StrafeDirection direction, double velocity) {
-    // Send three gesture events--began, changed, and ended.
-    // If we only send two then mission control doesn't work.
-    return post_dock_swipe(kCGSGesturePhaseBegan,   direction, velocity)
-        && post_dock_swipe(kCGSGesturePhaseChanged, direction, velocity)
-        && post_dock_swipe(kCGSGesturePhaseEnded,   direction, velocity);
+    // Legacy synchronous benchmark path. Prebuild to avoid partial allocation posts.
+    CGEventRef events[3] = {NULL, NULL, NULL};
+    const int64_t phases[] = {1, 2, 4};
+    bool ready = true;
+    for (size_t i = 0; i < 3; ++i) {
+        events[i] = strafe_create_switch_event(direction, velocity, phases[i], false, false);
+        if (!events[i]) ready = false;
+    }
+    for (size_t i = 0; i < 3; ++i) {
+        if (ready) CGEventPost(kCGSessionEventTap, events[i]);
+        if (events[i]) CFRelease(events[i]);
+    }
+    return ready;
 }
 
 // --- Topology (SPEC §6) ---------------------------------------------------
@@ -111,23 +150,78 @@ static CFStringRef copy_cursor_display_identifier(void) {
     return str; // caller releases
 }
 
+static bool strafe_has_type(CFTypeRef value, CFTypeID type) {
+    return value && CFGetTypeID(value) == type;
+}
+
+static bool strafe_space_id(CFTypeRef dictionary, uint64_t *out) {
+    if (!strafe_has_type(dictionary, CFDictionaryGetTypeID())) return false;
+    CFNumberRef number = CFDictionaryGetValue(dictionary, CFSTR("id64"));
+    int64_t value = 0;
+    if (!strafe_has_type(number, CFNumberGetTypeID()) || CFNumberIsFloatType(number) ||
+        !CFNumberGetValue(number, kCFNumberSInt64Type, &value) || value <= 0) return false;
+    *out = (uint64_t)value;
+    return true;
+}
+
+static bool strafe_extract_space_info(CFTypeRef display, StrafeInfo *outInfo) {
+    if (!strafe_has_type(display, CFDictionaryGetTypeID())) return false;
+    CFStringRef ident = CFDictionaryGetValue(display, CFSTR("Display Identifier"));
+    CFArrayRef spaces = CFDictionaryGetValue(display, CFSTR("Spaces"));
+    uint64_t current;
+    if (!strafe_has_type(ident, CFStringGetTypeID()) || CFStringGetLength(ident) == 0 ||
+        !strafe_has_type(spaces, CFArrayGetTypeID()) ||
+        !strafe_space_id(CFDictionaryGetValue(display, CFSTR("Current Space")), &current)) return false;
+    CFIndex count = CFArrayGetCount(spaces);
+    if (count <= 0 || (uint64_t)count > UINT_MAX) return false;
+    StrafeInfo result = {0};
+    if (!CFStringGetCString(ident, result.displayID, sizeof(result.displayID), kCFStringEncodingUTF8)) return false;
+    bool found = false;
+    for (CFIndex i = 0; i < count; ++i) {
+        uint64_t sid;
+        if (!strafe_space_id(CFArrayGetValueAtIndex(spaces, i), &sid)) return false;
+        if (sid == current) {
+            if (found) return false;
+            result.currentIndex = (unsigned int)i;
+            found = true;
+        }
+    }
+    if (!found) return false;
+    result.currentSpaceID = current;
+    result.spaceCount = (unsigned int)count;
+    *outInfo = result;
+    return true;
+}
+
 bool strafe_get_space_info(StrafeInfo *outInfo) {
+    return strafe_get_space_info_for_display(NULL, outInfo);
+}
+
+bool strafe_get_space_info_for_display(const char *displayID, StrafeInfo *outInfo) {
     if (!outInfo) { return false; }
-    if (!strafe_cgs_available()) { return false; }
-
+    // Copy before clearing output: displayID may point into outInfo->displayID.
+    CFStringRef targetDisplay = displayID
+        ? CFStringCreateWithCString(NULL, displayID, kCFStringEncodingUTF8) : NULL;
     memset(outInfo, 0, sizeof(*outInfo));
-
+    if (!strafe_cgs_available()) {
+        if (targetDisplay) CFRelease(targetDisplay);
+        return false;
+    }
     CGSConnectionID conn = CGSMainConnectionID();
-
-    CFStringRef targetDisplay = copy_cursor_display_identifier();
+    if (!displayID) targetDisplay = copy_cursor_display_identifier();
     // Fall back to the menu-bar display identifier if cursor lookup failed.
-    if (!targetDisplay && (&CGSCopyActiveMenuBarDisplayIdentifier != NULL)) {
+    if (!displayID && !targetDisplay && (&CGSCopyActiveMenuBarDisplayIdentifier != NULL)) {
         targetDisplay = CGSCopyActiveMenuBarDisplayIdentifier(conn);
+    }
+    if (!strafe_has_type(targetDisplay, CFStringGetTypeID()) || CFStringGetLength(targetDisplay) == 0) {
+        if (targetDisplay) CFRelease(targetDisplay);
+        return false;
     }
 
     CFArrayRef displaySpaces = CGSCopyManagedDisplaySpaces(conn, NULL);
-    if (!displaySpaces) {
+    if (!strafe_has_type(displaySpaces, CFArrayGetTypeID())) {
         if (targetDisplay) { CFRelease(targetDisplay); }
+        if (displaySpaces) CFRelease(displaySpaces);
         return false;
     }
 
@@ -138,64 +232,20 @@ bool strafe_get_space_info(StrafeInfo *outInfo) {
         return false;
     }
 
-    // Pick the matching display dict; if the target isn't found, fall back to
-    // the first display in the list (SPEC §6).
+    // Exact display identity is required, including subsequent verification reads.
     CFDictionaryRef displayDict = NULL;
     if (targetDisplay) {
         for (CFIndex d = 0; d < displayCount; d++) {
             CFDictionaryRef candidate = (CFDictionaryRef)CFArrayGetValueAtIndex(displaySpaces, d);
-            if (!candidate) { continue; }
+            if (!strafe_has_type(candidate, CFDictionaryGetTypeID())) { continue; }
             CFStringRef ident = (CFStringRef)CFDictionaryGetValue(candidate, CFSTR("Display Identifier"));
-            if (ident && CFStringCompare(ident, targetDisplay, 0) == kCFCompareEqualTo) {
+            if (strafe_has_type(ident, CFStringGetTypeID()) && CFEqual(ident, targetDisplay)) {
                 displayDict = candidate;
                 break;
             }
         }
     }
-    if (!displayDict) {
-        displayDict = (CFDictionaryRef)CFArrayGetValueAtIndex(displaySpaces, 0);
-    }
-
-    bool found = false;
-    if (displayDict) {
-        CFStringRef displayIdentifier = (CFStringRef)CFDictionaryGetValue(displayDict, CFSTR("Display Identifier"));
-
-        CFArrayRef spaces = (CFArrayRef)CFDictionaryGetValue(displayDict, CFSTR("Spaces"));
-        if (spaces) {
-            CFIndex count = CFArrayGetCount(spaces);
-            outInfo->spaceCount = (unsigned int)count;
-
-            // Determine the current space id for this display.
-            CGSSpaceID currentSpaceID = 0;
-            CFDictionaryRef currentSpace = (CFDictionaryRef)CFDictionaryGetValue(displayDict, CFSTR("Current Space"));
-            if (currentSpace) {
-                CFNumberRef id64 = (CFNumberRef)CFDictionaryGetValue(currentSpace, CFSTR("id64"));
-                if (id64) { CFNumberGetValue(id64, kCFNumberSInt64Type, &currentSpaceID); }
-            }
-            if (currentSpaceID == 0) {
-                currentSpaceID = CGSGetActiveSpace(conn);
-            }
-
-            // Map the current space id to a zero-based index within this display.
-            outInfo->currentIndex = 0;
-            for (CFIndex s = 0; s < count; s++) {
-                CFDictionaryRef spaceDict = (CFDictionaryRef)CFArrayGetValueAtIndex(spaces, s);
-                if (!spaceDict) { continue; }
-                CFNumberRef idNum = (CFNumberRef)CFDictionaryGetValue(spaceDict, CFSTR("id64"));
-                CGSSpaceID sid = 0;
-                if (idNum) { CFNumberGetValue(idNum, kCFNumberSInt64Type, &sid); }
-                if (sid == currentSpaceID) {
-                    outInfo->currentIndex = (unsigned int)s;
-                    break;
-                }
-            }
-
-            if (displayIdentifier) {
-                CFStringGetCString(displayIdentifier, outInfo->displayID, sizeof(outInfo->displayID), kCFStringEncodingUTF8);
-            }
-            found = true;
-        }
-    }
+    bool found = strafe_extract_space_info(displayDict, outInfo);
 
     if (targetDisplay) { CFRelease(targetDisplay); }
     CFRelease(displaySpaces);
@@ -203,6 +253,14 @@ bool strafe_get_space_info(StrafeInfo *outInfo) {
 }
 
 // --- Event inspection helpers (SPEC §2.2, §2.3) ---------------------------
+bool strafe_event_is_strafe(CGEventRef event) {
+    return event && CGEventGetIntegerValueField(event, kCGEventSourceUserData) == kStrafeEventMarker;
+}
+double strafe_event_generic_progress(CGEventRef event) {
+    return event ? CGEventGetDoubleValueField(event, (CGEventField)119) : 0;
+}
+int64_t strafe_cgs_event_fluid_touch(void) { return kCGSEventFluidTouchGesture; }
+int64_t strafe_iohid_event_generic_swipe(void) { return 32; }
 int64_t strafe_event_cgs_type(CGEventRef event) {
     return CGEventGetIntegerValueField(event, kCGSEventTypeField);
 }
@@ -248,7 +306,7 @@ int32_t strafe_field_swipe_velocity_x(void) { return (int32_t)kCGEventGestureSwi
 int32_t strafe_field_swipe_velocity_y(void) { return (int32_t)kCGEventGestureSwipeVelocityY; }
 int32_t strafe_field_gesture_phase(void)    { return (int32_t)kCGEventGesturePhase; }
 
-// Raw tap mask: (1<<29) gesture | (1<<30) dock-control ONLY.
+// Raw tap mask: gesture29, dock-control30 and fluid-touch31.
 //
 // KEY-EVENTS-IN-MASK DETERMINATION (see docs/SPEC.md §2.1):
 // The upstream reference (and this file's earlier revision) also OR'd in
@@ -271,7 +329,8 @@ int32_t strafe_field_gesture_phase(void)    { return (int32_t)kCGEventGesturePha
 // real space-swipe gestures, dropping idle keyboard wakeups to zero. Behavior is
 // unchanged because the removed events were never acted upon.
 uint64_t strafe_tap_event_mask(void) {
-    return (1ULL << kCGSEventGesture) | (1ULL << kCGSEventDockControl);
+    return (1ULL << kCGSEventGesture) | (1ULL << kCGSEventDockControl)
+        | (1ULL << kCGSEventFluidTouchGesture);
 }
 
 // --- Overlay / Exposé detection (SPEC §2.5) -------------------------------

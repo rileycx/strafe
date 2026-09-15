@@ -1,0 +1,37 @@
+Synthesis and serialization provenance
+======================================
+Sources/CStrafe/CStrafe.c and EventSerialization.h adapt InstantSpaceSwitcher
+Sources/ISS/ISS.c and event_serialize.c from the macos-27 branch pinned at
+bf32cf9732c706119e8307d2d70ae795b2b11c1c:
+https://github.com/jurplel/InstantSpaceSwitcher/tree/bf32cf9732c706119e8307d2d70ae795b2b11c1c
+
+The serializer and augmented shape also derive from FasterSwiper, including
+src/gesture-serialization.cc (https://github.com/mgbowen/FasterSwiper).
+Inspected HEAD resolved to 68f5c9b80a7d4876463d05bbf48d1a004651e143.
+Copyright 2026 Matthew Bowen. Licensed under Apache-2.0; full text follows
+in LICENSE-FasterSwiper.txt. The relevant ISS attribution is retained below.
+
+Strafe modifications: explicit endian writes instead of packed structs;
+checked finite fixed-point conversion; validated v2 fields and replacement of
+4205; event creation separated from posting; explicit inversion; strict topology.
+
+InstantSpaceSwitcher — MIT License
+Copyright (c) 2026 jurplel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

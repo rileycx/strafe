@@ -5,7 +5,7 @@ tap. That is a lot of trust to ask for, so this document states exactly what
 strafe can and cannot do, and how to verify every claim yourself. Every claim
 below points at a file and line you can read or a command you can run.
 
-The whole program is about **1,120 lines** of Swift + C (`wc -l Sources/**`).
+The program is a small Swift + C codebase (`wc -l Sources/strafe/*.swift Sources/CStrafe/*.{c,h} Sources/CStrafe/include/*.h`).
 You can build it from source in about 30 seconds (`swift build`) and audit it
 in an afternoon.
 
@@ -26,11 +26,12 @@ do so. The tap's event mask is defined in exactly one place, and it covers
 
   ```c
   uint64_t strafe_tap_event_mask(void) {
-      return (1ULL << kCGSEventGesture) | (1ULL << kCGSEventDockControl);
+      return (1ULL << kCGSEventGesture) | (1ULL << kCGSEventDockControl)
+          | (1ULL << kCGSEventFluidTouchGesture);
   }
   ```
 
-  That is `(1<<29) | (1<<30)` — the two private trackpad-gesture event types
+  That is `(1<<29) | (1<<30) | (1<<31)` — the private trackpad-gesture event types
   and nothing else. There is no `kCGEventKeyDown`/`kCGEventKeyUp` bit.
 
 - **Why keys are excluded — determination comment:** immediately above that
@@ -62,8 +63,10 @@ the wrappers in `Sources/CStrafe/CStrafe.c` (lines ~205–225):
 - swipe motion axis (field 123) — `strafe_event_swipe_motion`
 - gesture phase (field 132) — `strafe_event_gesture_phase`
 - swipe progress (field 124) — `strafe_event_swipe_progress`
+- generic macOS 27 swipe progress (field 119) — `strafe_event_generic_progress`
 - swipe velocity X (field 129) — `strafe_event_swipe_velocity_x`
 - source process id — `strafe_event_source_pid`
+- source user-data marker — `strafe_event_is_strafe`, to exclude our own output
 
 That is the entire surface of event data strafe inspects: enough to tell a real
 horizontal 3-finger space swipe from anything else, and its direction. No
@@ -76,6 +79,11 @@ Control is open so it can pass real swipes through — `strafe_is_expose_active`
 pick which display to switch on (`copy_cursor_display_identifier`, same file
 ~line 96). Neither the window list nor the cursor position is stored or
 transmitted; both are read, used for that one decision, and discarded.
+
+`Sources/strafe/MissionControlMonitor.swift` also registers an Accessibility
+observer on Dock for Exposé/Mission Control/Show Desktop entry and exit. It
+tracks only overlay state, and reconnects if Dock relaunches. This uses the
+existing Accessibility permission and does not observe application contents.
 
 ---
 
@@ -101,7 +109,10 @@ Each of these is verifiable with a single grep over `Sources/`.
   `stderr` (`grep -rn FileHandle.standardError Sources/`) and `stdout` (the
   `strafe status` CLI readout in `Permissions.printStatus`, `Sources/strafe/Permissions.swift`
   ~line 28) — never to a network socket, a file, or an analytics sink. Nothing
-  batches, serializes, or transmits usage.
+  transmits usage. Opt-in `STRAFE_DIAGNOSTICS=1` logs gesture metadata (up to 64
+  candidate samples), display/Space IDs, requested direction, phase timing and
+  transition results to stderr. Errors are logged even without that option.
+  A shell command using `tee` saves these diagnostics to a file chosen by the user.
 
 - **No auto-update.** strafe never downloads or executes anything. There is no
   updater, no Sparkle, no download URL (covered by the network grep above).

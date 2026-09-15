@@ -122,6 +122,54 @@ The app is about 1,080 lines of Swift and C with no third-party dependencies —
   strafe                     # start the menu-bar app
   ```
 
+## macOS 27 diagnostic build
+
+This checkout now includes an experimental macOS 27 compatibility path. It uses
+an embedded IOHID gesture payload and paced asynchronous posting. Physical
+interception is restricted to horizontal HID23 gestures; ambiguous HID32 events
+are logged in diagnostic mode but passed through. Live switching and time-to-interactivity
+still need verification on the target machine; the macOS 26 measurements above
+do not describe this build. See [the research report](docs/MACOS-27-RESEARCH.md).
+
+Build with `./Scripts/bundle.sh`, quit any running Strafe instance, then run:
+
+```bash
+STRAFE_DIAGNOSTICS=1 ./build/strafe.app/Contents/MacOS/strafe 2>&1 | tee /tmp/strafe-macos27.log
+```
+
+Test Control + Option + Left/Right from a middle Space, one press at a time.
+Diagnostics distinguish posted phases from an observed neighboring Space, or a
+timeout. Indices in the logs are **zero-based**. The engine serializes requests
+and waits for a stable live destination rather than counting unconfirmed moves.
+This diagnostic policy includes 100 ms of destination stability before servicing
+the next queued request; it is not the final rapid-switch latency tuning.
+
+Options are read from the environment at launch:
+
+| Variable | Values / default |
+|---|---|
+| `STRAFE_EVENT_PROFILE` | `auto` (macOS 27+ payload, older OS legacy), `legacy`, `macos27` |
+| `STRAFE_PHASE_GAP_MS` | `0`–`100`; default `10` for macOS27, `0` for legacy |
+| `STRAFE_INVERT_DIRECTION` | Defaults to `1` for augmented output, `0` for legacy; explicit `0`/`1` overrides |
+| `STRAFE_INVERT_SWIPE_DIRECTION` | Defaults to `1` on macOS 27+, `0` earlier; independent physical-progress mapping |
+| `STRAFE_INTERCEPT_SWIPES` | `1` (default); `0` leaves trackpad gestures native for hotkey-only testing |
+| `STRAFE_DIAGNOSTICS` | `0` (default), `1` for request/gesture diagnostics |
+
+Run `bash Scripts/test.sh` for non-posting serialization and mock-engine tests.
+These tests work with Command Line Tools and do not require XCTest. The existing
+`bench/` raw poster remains the **legacy** path; its timing results do not validate
+the new asynchronous app path.
+
+The initial live test confirmed instant switching but reversed output signs.
+The current build corrects those signs separately from physical swipe progress,
+and observes Dock's Accessibility Exposé notifications to pass Mission Control,
+App Exposé and Show Desktop gestures through. Notification delivery and the
+corrected mappings still require validation on the target machine.
+If delivery times out, goes to an unexpected Space, or cannot be prepared,
+trackpad interception is disabled automatically; it can be re-enabled from the
+menu. Hotkeys remain available. For initial hotkey-only diagnosis, prefix the
+launch command with `STRAFE_INTERCEPT_SWIPES=0`.
+
 ## Permissions
 
 strafe needs **Accessibility** permission, and only that. macOS requires it to

@@ -61,7 +61,7 @@ final class HotkeyManager {
 
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
-        InstallEventHandler(
+        let status = InstallEventHandler(
             GetApplicationEventTarget(),
             { _, event, userInfo -> OSStatus in
                 guard let userInfo, let event else { return OSStatus(eventNotHandledErr) }
@@ -90,6 +90,9 @@ final class HotkeyManager {
             userInfo,
             &eventHandler
         )
+        if status != noErr {
+            SwitchDiagnostics.log("[HotkeyManager] InstallEventHandler failed (status \(status))")
+        }
     }
 
     private func registerHotKey(keyCode: UInt32, id: UInt32, modifiers: UInt32) -> EventHotKeyRef? {
@@ -104,9 +107,7 @@ final class HotkeyManager {
             &ref
         )
         guard status == noErr else {
-            FileHandle.standardError.write(
-                Data("[HotkeyManager] RegisterEventHotKey failed (status \(status)) for id \(id)\n".utf8)
-            )
+            SwitchDiagnostics.log("[HotkeyManager] RegisterEventHotKey failed (status \(status)) for id \(id)")
             return nil
         }
         return ref
@@ -122,9 +123,7 @@ final class HotkeyManager {
         do {
             try engine.switchSpace(direction)
         } catch {
-            FileHandle.standardError.write(
-                Data("[HotkeyManager] switchSpace failed: \(error)\n".utf8)
-            )
+            SwitchDiagnostics.log("[HotkeyManager] switchSpace enqueue failed: \(error)")
         }
     }
 }

@@ -31,7 +31,7 @@ enum Permissions {
         let cgs = cgsAvailable ? "yes" : "no"
         print("strafe status")
         print("  Accessibility granted: \(ax)")
-        print("  Event tap running:     \(tap)")
+        print("  Event tap running:     \(tap) (this process only; not resident-app status)")
         print("  CGS symbols resolved:  \(cgs)")
     }
 }
