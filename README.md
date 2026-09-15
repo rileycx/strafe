@@ -147,14 +147,16 @@ The app is about 1,486 lines of Swift and C with no third-party dependencies —
   strafe                     # start the menu-bar app
   ```
 
-## macOS 27 diagnostic build
+## macOS 27 support
 
-This checkout now includes an experimental macOS 27 compatibility path. It uses
-an embedded IOHID gesture payload and paced asynchronous posting. Physical
+On macOS 27 the legacy synthetic gesture is ignored, so strafe uses an
+embedded IOHID gesture payload with paced asynchronous posting there, selected
+automatically (`STRAFE_EVENT_PROFILE=legacy` forces the old path). Physical
 interception is restricted to horizontal HID23 gestures; ambiguous HID32 events
-are logged in diagnostic mode but passed through. Live switching and time-to-interactivity
-still need verification on the target machine; the macOS 26 measurements above
-do not describe this build.
+are logged in diagnostic mode but passed through. Hotkeys and trackpad
+switching are verified live on 27 including both edges; ramp presets and
+pre-27 behavior still want a second machine's confirmation, and the macOS 26
+measurements above do not describe the new output path.
 
 Build with `./Scripts/bundle.sh`, quit any running Strafe instance, then run:
 
