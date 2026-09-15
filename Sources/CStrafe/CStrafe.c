@@ -420,5 +420,13 @@ bool strafe_is_expose_active(void) {
     // Mission Control: layer18Count > 0 && layer20Count > layer18Count.
     if (layer18Count > 0 && layer20Count > 0 && layer20Count <= layer18Count) { return true; }
     if (layer18Count > 0 && layer20Count > layer18Count) { return true; }
+    // macOS 27 (mc-probe): Mission Control shows a single Dock window at
+    // layer 20 with none at layer 18 (closed desktop shows no Dock windows at
+    // all under ExcludeDesktopElements), and Dock's AX overlay notifications
+    // no longer arrive — so a lone layer-20 window is the MC signal there. A
+    // Dock-owned layer-20 window is overlay chrome on older systems too, and
+    // the failure mode here is fail-safe: a false positive only passes one
+    // gesture through natively.
+    if (layer20Count > 0) { return true; }
     return false;
 }

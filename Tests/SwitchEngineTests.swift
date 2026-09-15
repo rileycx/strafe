@@ -22,6 +22,7 @@ struct SwitchEngineTests {
         try tests.testTrueEdgeDoesNotPost()
         try tests.testMacOS27DirectionAndBothEdges()
         try tests.testOverlayBlocksAndCancelsPendingGesture()
+        try tests.testSnapshotOverlayBlocksAdmissionWithoutPosting()
         try tests.testPhysicalGestureMappingAndPassthrough()
         try tests.testRampSpeedPostsBeganChangedStreamAndEnded()
         try tests.testTransientAnomalyRecovers()
@@ -29,7 +30,7 @@ struct SwitchEngineTests {
         try tests.testThreeConsecutiveFailuresPauseInterception()
         try tests.testOverlayGraceSuppressesFailureCallback()
         SwitchDiagnostics.flush()
-        print("Swift: 14 configuration/engine/interceptor tests passed (mock delivery; no events posted).")
+        print("Swift: 15 configuration/engine/interceptor tests passed (mock delivery; no events posted).")
     }
     private final class Desktop: @unchecked Sendable {
         let lock = NSLock()
@@ -37,6 +38,7 @@ struct SwitchEngineTests {
         var moves = false
         var reverse = false
         var overlay = false
+        var snapshotOverlay = false
         var openOverlayOnBegin = false
         var phases: [Int64] = []
         var times: [TimeInterval] = []
@@ -82,6 +84,10 @@ struct SwitchEngineTests {
                 self.lock.lock()
                 defer { self.lock.unlock() }
                 return self.overlay
+            }, overlaySnapshot: {
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                return self.snapshotOverlay
             })
         }
     }
@@ -408,6 +414,22 @@ struct SwitchEngineTests {
             second.fulfill()
         }
         second.wait()
+    }
+
+    func testSnapshotOverlayBlocksAdmissionWithoutPosting() throws {
+        // AX flag silent (as on macOS 27) but the window-layer snapshot sees
+        // the overlay: the request must fail cleanly before any post.
+        let desktop = Desktop()
+        desktop.snapshotOverlay = true
+        let engine = GestureSwitchEngine(configuration: try config(), dependencies: desktop.dependencies)
+        engine.setDeliveryFailureHandler { _ in fatalError("Overlay refusal must not pause interception") }
+        let finished = CompletionWaiter()
+        try engine.switchSpace(.right) { result in
+            guard case .failure(.overlayActive) = result else { fatalError("Snapshot overlay not respected: \(result)") }
+            finished.fulfill()
+        }
+        finished.wait()
+        precondition(desktop.snapshot().1.isEmpty)
     }
 
     private final class GestureSink: SwitchEngine {

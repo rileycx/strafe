@@ -119,6 +119,7 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         }
         var post: @Sendable (CGEvent) -> Void = { $0.post(tap: .cgSessionEventTap) }
         var overlayActive: @Sendable () -> Bool = { MissionControlMonitor.shared.isActive }
+        var overlaySnapshot: @Sendable () -> Bool = { strafe_is_expose_active() }
     }
 
     init(velocity: Double = GestureSwitchEngine.instantVelocity,
@@ -193,9 +194,14 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
 
     /// True when an overlay is up, recording the sighting for the failure
     /// grace period. All queue-confined callers use this instead of reading
-    /// the dependency directly.
-    private func overlayUp() -> Bool {
-        guard dependencies.overlayActive() else { return false }
+    /// the dependency directly. The window-layer snapshot runs only at request
+    /// admission: it costs a window-list scan, so the per-phase and per-poll
+    /// checks stay on the cheap AX flag (a mid-sequence overlay opening is a
+    /// ~10 ms race not worth scanning for).
+    private func overlayUp(includeSnapshot: Bool = false) -> Bool {
+        guard dependencies.overlayActive() || (includeSnapshot && dependencies.overlaySnapshot()) else {
+            return false
+        }
         lastOverlaySeen = ProcessInfo.processInfo.systemUptime
         return true
     }
@@ -206,7 +212,7 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         active = request
         anomalySignature = nil
         anomalyStreak = 0
-        guard !overlayUp() else {
+        guard !overlayUp(includeSnapshot: true) else {
             finish(.failure(.overlayActive), dropPending: true)
             return
         }
