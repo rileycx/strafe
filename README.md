@@ -57,7 +57,7 @@ except the one click macOS reserves for you:
 Set up strafe (https://github.com/rileycx/strafe), a macOS utility that makes
 Space switching instant. Steps:
 
-1. Clone the repo and read SECURITY.md, then skim the source (~1,100 lines,
+1. Clone the repo and read SECURITY.md, then skim the source (~1,486 lines,
    no dependencies) and confirm the claims hold: the event tap mask covers
    only gesture events, and there is no network, subprocess, or file-write
    code. Tell me what you found before proceeding.
@@ -88,21 +88,31 @@ acknowledgment and their copyright notice.
 ## Install
 
 strafe is distributed as source only — there is no prebuilt binary to trust.
-You build the code you can read.
+You build the code you can read. That means you need Apple's command line tools
+(`xcode-select --install`, a ~1.5 GB one-time download) and a Swift 6.3 or newer
+toolchain.
 
 ```bash
 git clone https://github.com/rileycx/strafe strafe && cd strafe
-./Scripts/bundle.sh
+./Scripts/install.sh
 ```
 
-This builds a release binary and assembles `build/strafe.app` (ad-hoc signed).
-Then:
+`install.sh` builds `strafe.app`, copies it to `/Applications`, launches it, and
+opens the Accessibility pane. Grant permission there, then quit strafe from its
+menu-bar icon and launch it again — the event tap is created at launch, so the
+grant does nothing until the app restarts.
 
-1. Drag `build/strafe.app` to `/Applications`.
-2. Launch it. It will prompt for Accessibility permission.
-3. Grant it in **System Settings › Privacy & Security › Accessibility**.
+Read the script first if you like; it's about 90 lines and does nothing
+privileged.
+If you'd rather do it by hand, `./Scripts/bundle.sh` just builds
+`build/strafe.app` and leaves it there for you to drag over yourself.
 
-The app is about 1,080 lines of Swift and C with no third-party dependencies —
+One wrinkle worth knowing: the bundle is ad-hoc signed, and ad-hoc signatures
+are content-based. Every rebuild looks like a *different* app to macOS, so
+after you update you will have to re-grant Accessibility and delete the stale
+entry from the list.
+
+The app is about 1,486 lines of Swift and C with no third-party dependencies —
 `swift build` finishes in seconds and you can read the whole thing. See
 [SECURITY.md](SECURITY.md).
 
@@ -112,13 +122,28 @@ The app is about 1,080 lines of Swift and C with no third-party dependencies —
 - **3-finger swipe** — just works once strafe is running and has Accessibility.
   Swipe left/right between Spaces and the switch is instant.
 - **Keyboard** — `ctrl`+`opt`+`←` and `ctrl`+`opt`+`→` switch Spaces.
-- **Menu bar** — click the strafe icon to enable/disable interception or check
-  whether Accessibility has been granted.
+- **Menu bar** — click the strafe icon to enable/disable interception, check
+  whether Accessibility has been granted, and see which version you're running
+  and where to get a newer one.
+- **Transition speed** *(menu bar › Transition speed)* — if instant is too
+  abrupt, you can trade some of it back for animation:
+
+  | preset | measured | what it is |
+  | --- | --- | --- |
+  | Instant | ~40 ms | the default: no slide at all |
+  | Quick | ~80 ms | a hint of motion |
+  | Smooth | ~110 ms | a visible but short slide |
+
+  Nothing slower is offered. The next step up measures ~170 ms, which is
+  macOS's own animated switch — and that is already what you get with strafe
+  turned off.
 - **CLI:**
 
   ```
   strafe switch left|right   # switch once and exit
   strafe status              # print accessibility / tap status
+  strafe speed [preset]      # show or set transition speed
+  strafe mc-probe [seconds]  # sample overlay detection for diagnosis
   strafe                     # start the menu-bar app
   ```
 
@@ -129,7 +154,7 @@ an embedded IOHID gesture payload and paced asynchronous posting. Physical
 interception is restricted to horizontal HID23 gestures; ambiguous HID32 events
 are logged in diagnostic mode but passed through. Live switching and time-to-interactivity
 still need verification on the target machine; the macOS 26 measurements above
-do not describe this build. See [the research report](docs/MACOS-27-RESEARCH.md).
+do not describe this build.
 
 Build with `./Scripts/bundle.sh`, quit any running Strafe instance, then run:
 
@@ -161,10 +186,13 @@ These tests work with Command Line Tools and do not require XCTest. The existing
 the new asynchronous app path.
 
 The initial live test confirmed instant switching but reversed output signs.
-The current build corrects those signs separately from physical swipe progress,
-and observes Dock's Accessibility Exposé notifications to pass Mission Control,
-App Exposé and Show Desktop gestures through. Notification delivery and the
-corrected mappings still require validation on the target machine.
+The current build corrects those signs separately from physical swipe progress.
+Mission Control, App Exposé and Show Desktop gestures pass through while an
+overlay is detected (Dock Accessibility notifications plus a window-layer
+snapshot); a failure within a second of an overlay can never disable trackpad
+interception, and a single odd topology read never fails a switch. If overlay
+detection misbehaves on your macOS version, run `strafe mc-probe`, open and
+close Mission Control while it samples, and share the log.
 If delivery times out, goes to an unexpected Space, or cannot be prepared,
 trackpad interception is disabled automatically; it can be re-enabled from the
 menu. Hotkeys remain available. For initial hotkey-only diagnosis, prefix the
@@ -178,8 +206,9 @@ swipe and replace it with the instant one.
 
 The tap sees only trackpad gesture and dock-control events. It does **not** see
 keystrokes: the event mask excludes key events entirely, and strafe has no
-network, telemetry, file access, or subprocess code. Every one of those claims
-is grep-verifiable — see [SECURITY.md](SECURITY.md) for the exact file and line
+network, telemetry, file access, or subprocess code. It stores exactly one
+preference: which transition speed you picked. Every one of those claims is
+grep-verifiable — see [SECURITY.md](SECURITY.md) for the exact file and line
 pointers.
 
 To revoke: **System Settings › Privacy & Security › Accessibility**, and toggle
@@ -191,9 +220,10 @@ strafe off (or remove it from the list).
 2. Delete `strafe.app`.
 3. Remove its entry from **System Settings › Privacy & Security ›
    Accessibility**.
+4. If you ever changed the transition speed: `defaults delete com.rileycx.strafe`.
 
-That's everything. strafe writes no preferences, caches, or other files — there
-is nothing else to clean up.
+That's everything. strafe writes no caches, databases, or other files — that one
+preference is the only thing it can leave behind.
 
 ## How it works
 

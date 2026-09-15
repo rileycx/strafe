@@ -16,6 +16,15 @@ APP_DIR="$BUILD_DIR/$APP_NAME.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
 YEAR="$(date +%Y)"
 
+# Single source of truth for the version, shared with Scripts/release.sh. Read
+# it here rather than hardcoding, so a dev bundle and a signed release built
+# from the same commit cannot report different versions.
+if [[ ! -f "$ROOT_DIR/VERSION" ]]; then
+  echo "error: VERSION file not found at $ROOT_DIR/VERSION" >&2
+  exit 1
+fi
+VERSION="$(tr -d ' \t\n\r' < "$ROOT_DIR/VERSION")"
+
 # Release build flags (shipped binary only; the plain `swift build` dev path is
 # unchanged). -Osize optimizes for size, -dead_strip drops unreachable code, and
 # a post-link `strip` removes debug/local symbols — together ~30% smaller binary.
@@ -30,7 +39,7 @@ if [[ ! -x "$BIN_PATH" ]]; then
   exit 1
 fi
 
-echo "==> Assembling $APP_NAME.app…"
+echo "==> Assembling $APP_NAME.app (version $VERSION)…"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR"
 cp "$BIN_PATH" "$MACOS_DIR/$BIN_NAME"
@@ -61,7 +70,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>$VERSION</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>

@@ -23,8 +23,12 @@ struct SwitchEngineTests {
         try tests.testMacOS27DirectionAndBothEdges()
         try tests.testOverlayBlocksAndCancelsPendingGesture()
         try tests.testPhysicalGestureMappingAndPassthrough()
+        try tests.testRampSpeedPostsBeganChangedStreamAndEnded()
+        try tests.testTransientAnomalyRecovers()
+        try tests.testPersistentAnomalyStillFailsAndReports()
+        try tests.testOverlayGraceSuppressesFailureCallback()
         SwitchDiagnostics.flush()
-        print("Swift: 9 configuration/engine/interceptor tests passed (mock delivery; no events posted).")
+        print("Swift: 13 configuration/engine/interceptor tests passed (mock delivery; no events posted).")
     }
     private final class Desktop: @unchecked Sendable {
         let lock = NSLock()
@@ -44,11 +48,14 @@ struct SwitchEngineTests {
             return .init(display: "display-A", index: index, count: 4, id: UInt64(index) + 10)
         }
 
+        var progresses: [Double] = []
+
         func post(_ event: CGEvent) {
             lock.lock()
             defer { lock.unlock() }
             let phase = strafe_event_gesture_phase(event)
             phases.append(phase)
+            progresses.append(strafe_event_swipe_progress(event))
             times.append(ProcessInfo.processInfo.systemUptime)
             if openOverlayOnBegin && phase == 1 { overlay = true }
             if moves && phase == 4 {
@@ -63,10 +70,10 @@ struct SwitchEngineTests {
             lock.unlock()
         }
 
-        func snapshot() -> (UInt32, [Int64], [TimeInterval], [String?]) {
+        func snapshot() -> (UInt32, [Int64], [TimeInterval], [String?], [Double]) {
             lock.lock()
             defer { lock.unlock() }
-            return (index, phases, times, readDisplays)
+            return (index, phases, times, readDisplays, progresses)
         }
 
         var dependencies: GestureSwitchEngine.Dependencies {
@@ -150,7 +157,7 @@ struct SwitchEngineTests {
         engine.resetPredictions() // Workspace notifications must not cancel work.
         finished.wait()
         finished.wait()
-        let (index, phases, times, displays) = desktop.snapshot()
+        let (index, phases, times, displays, _) = desktop.snapshot()
         precondition(index == 1)
         precondition(phases == [1, 2, 4, 1, 2, 4])
         for i in [1, 2, 4, 5] { precondition(times[i] - times[i - 1] >= 0.009) }
@@ -234,6 +241,131 @@ struct SwitchEngineTests {
             finished.wait()
             precondition(desktop.snapshot().1 == (alreadyOpen ? [] : [1, 8]))
         }
+    }
+
+    func testRampSpeedPostsBeganChangedStreamAndEnded() throws {
+        let desktop = Desktop()
+        desktop.enableMoves()
+        let engine = GestureSwitchEngine(configuration: try config(), dependencies: desktop.dependencies)
+        precondition(engine.transitionSpeed == .instant)
+        engine.setTransitionSpeed(.quick)
+        precondition(engine.transitionSpeed == .quick)
+        let finished = CompletionWaiter()
+        try engine.switchSpace(.right) { result in
+            guard case .success = result else { fatalError("Ramp failed: \(result)") }
+            finished.fulfill()
+        }
+        finished.wait()
+        let (index, phases, _, _, progresses) = desktop.snapshot()
+        precondition(index == 2)
+        precondition(phases == [1] + Array(repeating: Int64(2), count: TransitionSpeed.rampSteps) + [4])
+        precondition(abs(progresses[0]) == 0)
+        let stream = progresses.dropFirst()
+        precondition(stream.allSatisfy { $0 > 0 })
+        // Progress crosses a float conversion inside the event store.
+        precondition(abs(stream.last! - TransitionSpeed.rampPeakProgress) < 1e-6)
+        for pair in zip(stream, stream.dropFirst()) { precondition(pair.1 >= pair.0) }
+    }
+
+    /// Scripted topology/overlay source for anomaly tests. Reads and overlay
+    /// answers play from fixed scripts (repeating the tail), so poll-count
+    /// timing never runs the script out.
+    private final class Scripted: @unchecked Sendable {
+        typealias Topology = GestureSwitchEngine.Topology
+        let lock = NSLock()
+        var reads: [Topology] = []
+        var overlays: [Bool] = []
+        var phases: [Int64] = []
+        var readCalls = 0
+        var overlayCalls = 0
+
+        func topology(display: String, index: UInt32, id: UInt64) -> Topology {
+            Topology(display: display, index: index, count: 4, id: id)
+        }
+
+        var dependencies: GestureSwitchEngine.Dependencies {
+            .init(read: { [self] _ in
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                self.readCalls += 1
+                return self.reads[min(self.readCalls - 1, self.reads.count - 1)]
+            }, post: { [self] event in
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                self.phases.append(strafe_event_gesture_phase(event))
+            }, overlayActive: { [self] in
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                self.overlayCalls += 1
+                return self.overlays[min(self.overlayCalls - 1, self.overlays.count - 1)]
+            })
+        }
+    }
+
+    func testTransientAnomalyRecovers() throws {
+        let scripted = Scripted()
+        let origin = scripted.topology(display: "display-A", index: 1, id: 11)
+        let anomaly = scripted.topology(display: "display-A", index: 0, id: 99)
+        let target = scripted.topology(display: "display-A", index: 2, id: 22)
+        // Admission read, cursor-routing recheck, one bad poll, then steady target.
+        scripted.reads = [origin, origin, anomaly, target, target, target, target,
+                          target, target, target, target, target, target]
+        scripted.overlays = [false]
+        let engine = GestureSwitchEngine(configuration: try config(), dependencies: scripted.dependencies)
+        let finished = CompletionWaiter()
+        try engine.switchSpace(.right) { result in
+            guard case .success = result else { fatalError("Transient anomaly was fatal: \(result)") }
+            finished.fulfill()
+        }
+        finished.wait()
+        precondition(scripted.phases == [1, 2, 4])
+    }
+
+    func testPersistentAnomalyStillFailsAndReports() throws {
+        let scripted = Scripted()
+        let origin = scripted.topology(display: "display-A", index: 1, id: 11)
+        let anomaly = scripted.topology(display: "display-A", index: 0, id: 99)
+        scripted.reads = [origin, origin, anomaly]
+        scripted.overlays = [false]
+        let engine = GestureSwitchEngine(configuration: try config(), dependencies: scripted.dependencies)
+        let reported = CompletionWaiter()
+        engine.setDeliveryFailureHandler { error in
+            guard case .unexpectedChange = error else { fatalError("Unexpected fallback: \(error)") }
+            reported.fulfill()
+        }
+        let finished = CompletionWaiter()
+        try engine.switchSpace(.right) { result in
+            guard case .failure(.unexpectedChange) = result else { fatalError("Expected mismatch: \(result)") }
+            finished.fulfill()
+        }
+        finished.wait()
+        reported.wait()
+    }
+
+    func testOverlayGraceSuppressesFailureCallback() throws {
+        let scripted = Scripted()
+        let origin = scripted.topology(display: "display-A", index: 1, id: 11)
+        let anomaly = scripted.topology(display: "display-A", index: 0, id: 99)
+        scripted.reads = [origin, origin, anomaly]
+        // Overlay up for the first request only: it fails cleanly as
+        // overlayActive and stamps the grace window for what follows.
+        scripted.overlays = [true, false]
+        let engine = GestureSwitchEngine(configuration: try config(), dependencies: scripted.dependencies)
+        engine.setDeliveryFailureHandler { _ in fatalError("Grace failed: callback fired") }
+        let first = CompletionWaiter()
+        try engine.switchSpace(.right) { result in
+            guard case .failure(.overlayActive) = result else { fatalError("Overlay not respected: \(result)") }
+            first.fulfill()
+        }
+        first.wait()
+        // Topology still mid-flight from Mission Control's close animation:
+        // the request fails, but interception must survive it.
+        let second = CompletionWaiter()
+        try engine.switchSpace(.right) { result in
+            guard case .failure(.unexpectedChange) = result else { fatalError("Expected mismatch: \(result)") }
+            second.fulfill()
+        }
+        second.wait()
     }
 
     private final class GestureSink: SwitchEngine {

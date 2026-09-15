@@ -1,4 +1,5 @@
 import AppKit
+import CStrafe
 
 // MARK: - Entry point
 //
@@ -63,13 +64,19 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
             FileHandle.standardError.write(Data("unknown direction '\(args[1])' (expected left|right)\n".utf8))
             return 2
         }
+        // Honor the persisted transition speed, same as the menu-bar app, so
+        // `strafe switch` and a real swipe look identical.
+        engine.setTransitionSpeed(TransitionSpeed.stored)
         do {
             MissionControlMonitor.shared.start()
             defer { MissionControlMonitor.shared.stop() }
             let completion = CLISwitchResult()
             try engine.switchSpace(direction) { completion.store($0) }
-            // Covers the maximum configured phase gaps (200 ms), 750 ms
-            // observation, and scheduling slack. Never exit merely on enqueue.
+            // Covers ramp schedules (60 ms), 750 ms observation, and
+            // scheduling slack. Never exit merely on enqueue: `CGEventPost`
+            // hands the gesture to the WindowServer asynchronously, and an
+            // exit that close behind the post loses it. The menu-bar app never
+            // hits this because it stays alive.
             let deadline = ProcessInfo.processInfo.systemUptime + 2.0
             // A timer supplies a run-loop source even in this headless process.
             let timer = Timer(timeInterval: 0.01, repeats: true) { _ in }
@@ -103,6 +110,64 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
         print("  Overlay active:        \(MissionControlMonitor.shared.isActive)")
         return 0
 
+    case "speed":
+        // Same setting the menu-bar "Transition speed" submenu writes; a running
+        // menu-bar app won't notice until relaunch.
+        guard args.count >= 2 else {
+            let current = TransitionSpeed.stored
+            print("transition speed: \(current.title)")
+            let width = TransitionSpeed.allCases.map(\.name.count).max() ?? 0
+            for speed in TransitionSpeed.allCases {
+                let mark = speed == current ? "*" : " "
+                let pad = String(repeating: " ", count: width - speed.name.count)
+                print("  \(mark) \(speed.name)\(pad)  \(speed.title)")
+            }
+            return 0
+        }
+        guard let speed = TransitionSpeed(name: args[1]) else {
+            let names = TransitionSpeed.allCases.map(\.name).joined(separator: "|")
+            FileHandle.standardError.write(Data(
+                "unknown speed '\(args[1])' (expected \(names))\n".utf8))
+            return 2
+        }
+        speed.persist()
+        print("transition speed: \(speed.title)")
+        return 0
+
+    case "mc-probe":
+        // Overlay-detection diagnostic: reports what Mission Control looks
+        // like to strafe while you open and close it. AX notifications (if
+        // Dock still posts them) log as they arrive; the layer histogram
+        // shows what the snapshot heuristic sees. Private overlay behavior
+        // changes between macOS versions, so re-probe there before trusting
+        // these numbers anywhere else.
+        let seconds: Double
+        if args.count >= 2, let value = Double(args[1]), value > 0, value <= 120 {
+            seconds = value
+        } else if args.count >= 2 {
+            FileHandle.standardError.write(Data("usage: strafe mc-probe [seconds 1-120]\n".utf8))
+            return 2
+        } else {
+            seconds = 15
+        }
+        MissionControlMonitor.shared.start()
+        defer { MissionControlMonitor.shared.stop() }
+        print("mc-probe: open and close Mission Control within \(Int(seconds))s")
+        let end = ProcessInfo.processInfo.systemUptime + seconds
+        let timer = Timer(timeInterval: 0.25, repeats: true) { _ in
+            var dock = Int32(0), layer18 = Int32(0), layer20 = Int32(0)
+            strafe_expose_counts(&dock, &layer18, &layer20)
+            print("mc-probe ax=\(MissionControlMonitor.shared.isActive) " +
+                "snapshot=\(strafe_is_expose_active()) " +
+                "dock=\(dock) layer18=\(layer18) layer20=\(layer20)")
+        }
+        RunLoop.current.add(timer, forMode: .default)
+        defer { timer.invalidate() }
+        while ProcessInfo.processInfo.systemUptime < end {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        }
+        return 0
+
     default:
         FileHandle.standardError.write(Data("""
         strafe — near-instant macOS Spaces switching
@@ -111,6 +176,8 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
           strafe                      start the menu-bar app
           strafe switch left|right    switch space once and exit
           strafe status               print accessibility / tap status
+          strafe speed [preset]       show or set the swipe transition speed
+          strafe mc-probe [seconds]   sample overlay detection for diagnosis
 
         """.utf8))
         return 2
@@ -157,7 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 SwitchDiagnostics.log("trackpad interception paused after \(error); native swipes restored. Re-enable from the menu after diagnosis.")
             }
         }
-        statusItem = StatusItemController(interceptor: interceptor)
+        statusItem = StatusItemController(interceptor: interceptor, engine: engine)
 
         hotkeys = HotkeyManager(engine: engine)
         hotkeys.register()

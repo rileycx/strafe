@@ -92,6 +92,22 @@ func runMeasurement(_ args: [String]) -> Never {
     exit(0)
 }
 
+/// Characterise gesture shapes (see Sweep.swift). Needs no demo windows — it
+/// reads ground truth from CGS — so it is a much lighter run than `bench run`.
+@MainActor
+func runSweep(_ args: [String]) -> Never {
+    let trials = parseFlag(args, "--trials").flatMap { Int($0) } ?? 6
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    awaitAccessibility()
+    DispatchQueue.main.async {
+        Sweep.run(trials: trials)
+        exit(0)
+    }
+    app.run()
+    exit(0)
+}
+
 @MainActor
 func runSpecs() -> Never {
     print(MachineInfo.current().block)
@@ -114,6 +130,8 @@ case "windows":
     runWindows()
 case "run":
     runMeasurement(Array(args.dropFirst()))
+case "sweep":
+    runSweep(Array(args.dropFirst()))
 case "specs":
     runSpecs()
 default:

@@ -13,6 +13,7 @@ clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
 "$TMP/CStrafeTests"
 swiftc -swift-version 6 -target "$(uname -m)-apple-macosx15.0" \
   -I "$BIN/CStrafe.build" Sources/strafe/SwitchDiagnostics.swift \
+  Sources/strafe/Preferences.swift Sources/strafe/TransitionSpeed.swift \
   Sources/strafe/SwitchEngine.swift Sources/strafe/MissionControlMonitor.swift \
   Sources/strafe/SwipeInterceptor.swift Tests/SwitchEngineTests.swift \
   "$BIN/CStrafe.build/CStrafe.c.o" -framework ApplicationServices \

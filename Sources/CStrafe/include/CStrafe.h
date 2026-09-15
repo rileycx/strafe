@@ -28,7 +28,7 @@ typedef enum {
 typedef struct {
     unsigned int currentIndex;   // zero-based index of the active space on this display
     unsigned int spaceCount;     // number of spaces on this display
-    char displayID[128];         // display UUID string, used as the prediction-dictionary key
+    char displayID[128];         // display UUID string, pins observation to one display
     uint64_t currentSpaceID;     // active identity, verified in this display's Spaces array
 } StrafeInfo;
 
@@ -53,6 +53,18 @@ CGEventRef _Nullable strafe_create_switch_event(StrafeDirection direction, doubl
 // event could not be created or arguments are invalid. `velocity` is the gesture speed magnitude
 // (default 2000.0 == "instant"); sign is applied internally from `direction`.
 bool strafe_post_switch_gesture(StrafeDirection direction, double velocity);
+
+// Create one retained ramp event for the animated Transition speed presets
+// (SPEC §1.4): caller-chosen progress/velocity magnitudes with direction
+// applied internally like above. Unlike the instant shape — augmented velocity
+// on Ended only — a ramp carries its per-phase velocity on every phase; the
+// climbing `changed` stream is what makes the WindowServer animate. Same
+// validation plus finite nonnegative progress; NULL on invalid input. The
+// engine prebuilds began -> ramped `changed` stream -> ended and schedules the
+// phases itself, so one synchronous immediate-post helper (used only by the
+// previous fire-and-forget ramp path) has no callers left and is gone.
+CGEventRef _Nullable strafe_create_ramp_event(StrafeDirection direction, double velocity,
+    int64_t phase, double progress, bool augmented, bool inverted) CF_RETURNS_RETAINED;
 
 // --- Topology (SPEC §6) ---------------------------------------------------
 // Fill `outInfo` for the display under the cursor. Returns false if the CGS
@@ -92,11 +104,11 @@ int64_t strafe_gesture_phase_cancelled(void);   // 8
 // --- Private CGEventField indices (SPEC §1.2) -----------------------------
 // Exposed as functions ONLY so an out-of-tree caller (the bench measurement
 // tool) can build a custom-shaped dock-swipe event without re-hardcoding the
-// magic field numbers. The strafe app itself does not call these — its poster
-// (`strafe_post_switch_gesture`) writes the fields directly. These are pure
-// value accessors: no behavior change, no new event is posted, nothing in the
-// app's code path reads them. The field numbers stay single-sourced in
-// CStrafe.c. See docs/SPEC.md §1.2.
+// magic field numbers. The strafe app itself does not call these — its event
+// creators (`strafe_create_switch_event`, `strafe_create_ramp_event`) write the
+// fields directly. These are pure value accessors: no behavior change, no new
+// event is posted, nothing in the app's code path reads them. The field numbers
+// stay single-sourced in CStrafe.c. See docs/SPEC.md §1.2.
 int32_t strafe_field_cgs_event_type(void);    // 55  -> CGSEventType selector
 int32_t strafe_field_hid_type(void);          // 110 -> IOHIDEvent gesture type
 int32_t strafe_field_swipe_motion(void);      // 123 -> motion axis
@@ -113,6 +125,10 @@ uint64_t strafe_tap_event_mask(void);
 // --- Overlay / Exposé passthrough (SPEC §2.5) -----------------------------
 // True when App Exposé or Mission Control is up (Dock windows at layers 18/20).
 bool strafe_is_expose_active(void);
+// Dock-window layer census behind the heuristic above, for the mc-probe
+// diagnostic. NULL out-parameters are allowed.
+void strafe_expose_counts(int * _Nullable dockWindows, int * _Nullable layer18,
+    int * _Nullable layer20);
 
 CF_ASSUME_NONNULL_END
 

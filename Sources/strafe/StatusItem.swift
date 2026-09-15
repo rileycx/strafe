@@ -7,16 +7,30 @@ import AppKit
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let interceptor: SwipeInterceptor
+    private let engine: GestureSwitchEngine?
 
     private let toggleItem = NSMenuItem(
         title: "Enable", action: #selector(toggleEnabled), keyEquivalent: ""
     )
+    private let speedItem = NSMenuItem(
+        title: "Transition speed", action: nil, keyEquivalent: ""
+    )
+    private var speedItems: [NSMenuItem] = []
     private let accessibilityItem = NSMenuItem(
         title: "Accessibility granted: —", action: nil, keyEquivalent: ""
     )
 
-    init(interceptor: SwipeInterceptor) {
+    /// Shipped version, read from the bundle so `VERSION` stays the single
+    /// source of truth (`Scripts/bundle.sh` stamps it into Info.plist). A bare
+    /// `swift build` binary has no Info.plist, and "dev" is the honest answer
+    /// there — it genuinely isn't a released build.
+    private static var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+    }
+
+    init(interceptor: SwipeInterceptor, engine: GestureSwitchEngine? = nil) {
         self.interceptor = interceptor
+        self.engine = engine
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -34,8 +48,27 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         toggleItem.target = self
         accessibilityItem.isEnabled = false
 
+        engine?.setTransitionSpeed(TransitionSpeed.stored)
+
         menu.addItem(toggleItem)
+        buildSpeedSubmenu(into: menu)
         menu.addItem(accessibilityItem)
+
+        // Update story, stated rather than performed. strafe cannot reach the
+        // internet, so it cannot check for a new version; instead of a
+        // check-for-updates button that would need that ability, the menu just
+        // says what's running and where newer builds live. Both items are inert
+        // text — nothing is opened, copied, or fetched. Keeping them inert is
+        // what lets the greps in SECURITY.md keep returning zero hits, so
+        // resist the urge to make this line clickable.
+        menu.addItem(.separator())
+        for line in ["strafe \(Self.version)",
+                     "No auto-update — github.com/rileycx/strafe"] {
+            let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit strafe", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -43,6 +76,28 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         statusItem.menu = menu
         refresh()
+    }
+
+    /// The "Transition speed" submenu: one checkable item per preset.
+    ///
+    /// Hidden entirely when there is no real engine (stub engine / no
+    /// Accessibility), because nothing it offers would take effect.
+    private func buildSpeedSubmenu(into menu: NSMenu) {
+        guard engine != nil else { return }
+
+        let submenu = NSMenu()
+        for speed in TransitionSpeed.allCases {
+            let item = NSMenuItem(
+                title: speed.title, action: #selector(selectSpeed(_:)), keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = speed.rawValue
+            submenu.addItem(item)
+            speedItems.append(item)
+        }
+
+        speedItem.submenu = submenu
+        menu.addItem(speedItem)
     }
 
     // MARK: - NSMenuDelegate
@@ -64,6 +119,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refresh()
     }
 
+    /// Pick a transition speed. Persisted so the choice survives a relaunch.
+    @objc private func selectSpeed(_ sender: NSMenuItem) {
+        let speed = TransitionSpeed.from(rawValue: sender.tag)
+        engine?.setTransitionSpeed(speed)
+        speed.persist()
+        refresh()
+    }
+
     @objc private func quit() {
         interceptor.teardown()
         NSApp.terminate(nil)
@@ -73,6 +136,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func refresh() {
         toggleItem.title = interceptor.overrideEnabled ? "Disable" : "Enable"
+        if let engine {
+            let current = engine.transitionSpeed
+            speedItem.title = "Transition speed: \(current.title)"
+            for item in speedItems { item.state = item.tag == current.rawValue ? .on : .off }
+        }
         let granted = Permissions.isAccessibilityGranted
         accessibilityItem.title = "Accessibility granted: \(granted ? "yes" : "no")"
     }

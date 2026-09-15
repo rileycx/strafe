@@ -56,7 +56,7 @@ enum EventPosting {
     /// takes progress/velocity as parameters so we can shape a normal human-like
     /// swipe (ramped progress, moderate end velocity) instead of the instant
     /// ±FLT_TRUE_MIN / high-velocity variant.
-    private static func postDockSwipe(
+    static func postDockSwipe(
         phase: Int64, progress: Double, velocity: Double
     ) {
         guard let ev = CGEvent(source: nil) else { return }

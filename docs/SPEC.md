@@ -119,6 +119,21 @@ typedef CF_ENUM(uint16_t, CGGestureMotion) {            // written into field 12
   used in this way makes switching instant.").
 - Velocity magnitude comes from the `gestureSpeed` setting (default **2000.0**).
 
+> **strafe deviates here.** The reference treats velocity as the speed knob, so
+> a "slower transition" setting would be lower `gestureSpeed` at unchanged
+> zero-progress. Measured (`bench sweep`, n=6/shape, median ms to the new Space):
+> v=40 → 841 ms and it only switched 5/6; v=50 → 770; v=60 → 559; v=80 → 77;
+> v=2000 → 40. That is a cliff between 60 and 80, not a dial, and it is
+> unreliable at the slow end.
+>
+> Animation actually lives on the **progress ramp**: climbing progress 0 → 0.35
+> across N `changed` events over a span, then `ended` with a moderate end
+> velocity (~130). Same sweep: 30 ms → 80 ms, 60 ms → 107 ms, 120 ms → 171 ms,
+> 6/6 at every duration — evenly spaced and reliable, with 120 ms landing on
+> macOS's own animated switch. strafe's **Transition speed** setting is
+> therefore a ramp duration, not a velocity
+> (`Sources/strafe/TransitionSpeed.swift`).
+
 ### 1.5 The exact synthesis: one event builder, three-phase sequence
 Each phase is one `CGEventCreate(NULL)` event with all seven fields set, posted to
 **`kCGSessionEventTap`** via `CGEventPost`:

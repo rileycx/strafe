@@ -62,6 +62,16 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         let completion: Completion?
     }
 
+    /// The transition speed (SPEC §1.4). Written from the main actor (menu,
+    /// CLI) and read on `queue` at request execution, hence its own lock.
+    /// Ramps are scheduled phase-by-phase on `queue` — never slept inside the
+    /// event tap — so a whole triplet can never interleave with another's.
+    private let speedLock = NSLock()
+    private var speed: TransitionSpeed = .default
+    private var activeGapMS: Double = 0
+    private var anomalies = 0
+    private var lastOverlaySeen: TimeInterval = 0
+
     struct Topology: Sendable {
         let display: String
         let index: UInt32
@@ -94,6 +104,9 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         var read: @Sendable (String?) -> Topology? = { Topology.read(display: $0) }
         var build: @Sendable (SwitchDirection, Double, Int64, Bool, Bool) -> CGEvent? = {
             strafe_create_switch_event($0.cDirection, $1, $2, $3, $4)
+        }
+        var buildRamp: @Sendable (SwitchDirection, Double, Int64, Double, Bool, Bool) -> CGEvent? = {
+            strafe_create_ramp_event($0.cDirection, $1, $2, $3, $4, $5)
         }
         var post: @Sendable (CGEvent) -> Void = { $0.post(tap: .cgSessionEventTap) }
         var overlayActive: @Sendable () -> Bool = { MissionControlMonitor.shared.isActive }
@@ -151,15 +164,39 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         queue.async { self.deliveryFailureHandler = handler }
     }
 
+    /// The current transition speed (SPEC §1.4). The menu (main actor) and CLI
+    /// set it while the event-tap callback reads it, hence the lock. Read once
+    /// per request at execution; a change mid-flight applies to the next swipe.
+    var transitionSpeed: TransitionSpeed {
+        speedLock.lock(); defer { speedLock.unlock() }
+        return speed
+    }
+
+    func setTransitionSpeed(_ newValue: TransitionSpeed) {
+        speedLock.lock()
+        speed = newValue
+        speedLock.unlock()
+    }
+
     private func trace(_ message: String) {
         if configuration.diagnostics { SwitchDiagnostics.log(message) }
+    }
+
+    /// True when an overlay is up, recording the sighting for the failure
+    /// grace period. All queue-confined callers use this instead of reading
+    /// the dependency directly.
+    private func overlayUp() -> Bool {
+        guard dependencies.overlayActive() else { return false }
+        lastOverlaySeen = ProcessInfo.processInfo.systemUptime
+        return true
     }
 
     private func startNext() {
         guard active == nil, !pending.isEmpty else { return }
         let request = pending.removeFirst()
         active = request
-        guard !dependencies.overlayActive() else {
+        anomalies = 0
+        guard !overlayUp() else {
             finish(.failure(.overlayActive), dropPending: true)
             return
         }
@@ -170,18 +207,44 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         }
         origin = live
         let atEdge = request.direction == .left ? live.index == 0 : live.index == live.count - 1
-        trace("request=\(request.id) direction=\(request.direction) live={\(live.summary)} predicted=none target=\(atEdge ? "edge" : String(request.direction == .left ? live.index - 1 : live.index + 1))")
+        speedLock.lock()
+        let shape = speed
+        speedLock.unlock()
+        trace("request=\(request.id) direction=\(request.direction) speed=\(shape.name) live={\(live.summary)} predicted=none target=\(atEdge ? "edge" : String(request.direction == .left ? live.index - 1 : live.index + 1))")
         guard !atEdge else { finish(.failure(.atEdge)); return }
         target = request.direction == .left ? live.index - 1 : live.index + 1
         // Allocate the whole sequence before posting Began. A builder failure
         // must not strand Dock with a partially constructed gesture.
-        for phase in [strafe_gesture_phase_began(), strafe_gesture_phase_changed(), strafe_gesture_phase_ended()] {
-            guard let event = dependencies.build(request.direction, velocity, phase,
-                                                 configuration.augmented, configuration.inverted) else {
-                finish(.failure(.postFailed), dropPending: true)
-                return
+        if let rampMs = shape.rampMilliseconds {
+            activeGapMS = rampMs / Double(TransitionSpeed.rampSteps)
+            let peak = TransitionSpeed.rampPeakProgress
+            let endVelocity = TransitionSpeed.rampEndVelocity
+            var sequence: [(phase: Int64, progress: Double, velocity: Double)] =
+                [(strafe_gesture_phase_began(), 0.0, 0.0)]
+            for step in 1...TransitionSpeed.rampSteps {
+                let frac = Double(step) / Double(TransitionSpeed.rampSteps)
+                sequence.append((strafe_gesture_phase_changed(), peak * frac, endVelocity * frac))
             }
-            events.append(event)
+            sequence.append((strafe_gesture_phase_ended(), peak, endVelocity))
+            for (phase, progress, stepVelocity) in sequence {
+                guard let event = dependencies.buildRamp(request.direction, stepVelocity, phase,
+                                                         progress, configuration.augmented,
+                                                         configuration.inverted) else {
+                    finish(.failure(.postFailed), dropPending: true)
+                    return
+                }
+                events.append(event)
+            }
+        } else {
+            activeGapMS = configuration.phaseGapMS
+            for phase in [strafe_gesture_phase_began(), strafe_gesture_phase_changed(), strafe_gesture_phase_ended()] {
+                guard let event = dependencies.build(request.direction, velocity, phase,
+                                                     configuration.augmented, configuration.inverted) else {
+                    finish(.failure(.postFailed), dropPending: true)
+                    return
+                }
+                events.append(event)
+            }
         }
         // Posting routes via the cursor. Recheck after construction and before
         // Began; all subsequent observation stays pinned to this display.
@@ -195,7 +258,7 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
 
     private func postPhase(_ index: Int) {
         guard let request = active else { return }
-        if dependencies.overlayActive() {
+        if overlayUp() {
             // An overlay opened between phases. Close our partial synthetic
             // gesture before dropping queued requests; never leave it Began.
             if index > 0, let cancelled = dependencies.build(request.direction, velocity,
@@ -206,9 +269,9 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
             return
         }
         dependencies.post(events[index])
-        trace("request=\(request.id) posted phase=\(["Began", "Changed", "Ended"][index]) uptime=\(ProcessInfo.processInfo.systemUptime)")
-        if index < 2 {
-            queue.asyncAfter(deadline: .now() + configuration.phaseGapMS / 1000) {
+        trace("request=\(request.id) posted phase=\(Self.phaseName(strafe_event_gesture_phase(events[index]))) uptime=\(ProcessInfo.processInfo.systemUptime)")
+        if index + 1 < events.count {
+            queue.asyncAfter(deadline: .now() + activeGapMS / 1000) {
                 self.postPhase(index + 1)
             }
         } else {
@@ -217,9 +280,33 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         }
     }
 
+    private static func phaseName(_ phase: Int64) -> String {
+        switch phase {
+        case strafe_gesture_phase_began(): return "Began"
+        case strafe_gesture_phase_changed(): return "Changed"
+        case strafe_gesture_phase_ended(): return "Ended"
+        case strafe_gesture_phase_cancelled(): return "Cancelled"
+        default: return "phase\(phase)"
+        }
+    }
+
+    /// A single odd topology read proves nothing: Mission Control's close
+    /// animation can leave CGS mid-flight for a poll or two. Only consecutive
+    /// anomalies fail the request; any clean read resets the count.
+    private func anomalous(_ request: Request, _ message: String, live: Topology) {
+        anomalies += 1
+        guard anomalies >= 2 else {
+            trace("request=\(request.id) transient \(message) live={\(live.summary)}")
+            queue.asyncAfter(deadline: .now() + 0.025) { self.poll() }
+            return
+        }
+        trace("request=\(request.id) \(message) live={\(live.summary)}")
+        finish(.failure(.unexpectedChange), dropPending: true)
+    }
+
     private func poll() {
         guard let request = active, let origin else { return }
-        guard !dependencies.overlayActive() else {
+        guard !overlayUp() else {
             finish(.failure(.overlayActive), dropPending: true)
             return
         }
@@ -237,14 +324,12 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         guard live.count == origin.count,
               (live.index == origin.index && live.id == origin.id) ||
                 (live.index == target && live.id != origin.id) else {
-            trace("request=\(request.id) unexpected transition live={\(live.summary)}")
-            finish(.failure(.unexpectedChange), dropPending: true)
+            anomalous(request, "unexpected transition", live: live)
             return
         }
         if live.index == target {
             if let candidateID, candidateID != live.id {
-                trace("request=\(request.id) target ID changed live={\(live.summary)}")
-                finish(.failure(.unexpectedChange), dropPending: true)
+                anomalous(request, "target ID changed", live: live)
                 return
             }
             if candidateID == nil { candidateID = live.id; candidateSince = now }
@@ -256,10 +341,10 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
                 return
             }
         } else if candidateID != nil {
-            trace("request=\(request.id) transition reverted live={\(live.summary)}")
-            finish(.failure(.unexpectedChange), dropPending: true)
+            anomalous(request, "transition reverted", live: live)
             return
         }
+        anomalies = 0
         queue.asyncAfter(deadline: .now() + 0.025) { self.poll() }
     }
 
@@ -271,7 +356,16 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
             SwitchDiagnostics.log("request=\(request.id) direction=\(request.direction) failed: \(error)")
             switch error {
             case .unexpectedChange, .observationTimedOut, .postFailed, .topologyUnavailable:
-                deliveryFailureHandler?(error)
+                // Grace period: an overlay was up within the last second, so
+                // this failure likely describes Mission Control's close
+                // animation settling — not a broken replacement path. Never
+                // disable interception over that.
+                if error == .unexpectedChange || error == .observationTimedOut,
+                   ProcessInfo.processInfo.systemUptime - lastOverlaySeen < 1.0 {
+                    SwitchDiagnostics.log("request=\(request.id) failure callback suppressed (recent overlay)")
+                } else {
+                    deliveryFailureHandler?(error)
+                }
             default: break
             }
         }

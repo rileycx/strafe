@@ -176,8 +176,60 @@ static void topology(void) {
     CFRelease(a); CFRelease(b); CFRelease(missing);
 }
 
+static void ramps(void) {
+    const int phases[] = {1, 2, 4, 8};
+    const double steps[][2] = {{0.0, 0.0}, {0.1, 65.0}, {0.35, 130.0}};
+    for (int modern = 0; modern < 2; ++modern)
+    for (int inverted = 0; inverted < 2; ++inverted)
+    for (int dir = 0; dir < 2; ++dir)
+    for (size_t i = 0; i < 3; ++i) {
+        int phase = phases[i], sign = (dir != inverted) ? 1 : -1;
+        double progress = steps[i][0], velocity = steps[i][1];
+        CGEventRef event = strafe_create_ramp_event((StrafeDirection)dir, velocity,
+            phase, progress, modern, inverted);
+        assert(event && strafe_event_is_strafe(event));
+        // Ramps carry per-phase velocity on every phase, unlike the instant shape.
+        assert(strafe_event_swipe_velocity_x(event) == sign * velocity);
+        assert(CGEventGetDoubleValueField(event, (CGEventField)130) == sign * velocity);
+        CFDataRef data = CGEventCreateData(NULL, event);
+        assert(data);
+        CGEventRef copy = CGEventCreateFromData(NULL, data);
+        assert(copy);
+        assert(strafe_event_cgs_type(copy) == 30 && strafe_event_hid_type(copy) == 23);
+        assert(strafe_event_gesture_phase(copy) == phase && strafe_event_swipe_motion(copy) == 1);
+        // Progress crosses a float conversion in serialization; velocities here
+        // are exactly representable and compare exactly.
+        assert(fabs(strafe_event_swipe_progress(copy) - sign * progress) < 1e-7);
+        assert(strafe_event_swipe_velocity_x(copy) == sign * velocity);
+        if (modern) {
+            assert(CGEventGetIntegerValueField(copy, (CGEventField)134) == phase);
+            // Re-augmenting the copy replaces (not duplicates) the payload.
+            CGEventRef again = strafe_augment(copy);
+            assert(again);
+            CFRelease(again);
+        }
+        CFRelease(copy);
+        CFRelease(data);
+        CFRelease(event);
+    }
+    // Invalid ramp inputs: bad direction/phase, negative or non-finite progress.
+    assert(!strafe_create_ramp_event((StrafeDirection)42, 130, 2, 0.1, false, false));
+    assert(!strafe_create_ramp_event(StrafeDirectionRight, 130, 3, 0.1, true, false));
+    assert(!strafe_create_ramp_event(StrafeDirectionRight, 130, 2, -0.1, false, false));
+    assert(!strafe_create_ramp_event(StrafeDirectionRight, 130, 2, NAN, true, false));
+    assert(!strafe_create_ramp_event(StrafeDirectionRight, -1, 2, 0.1, false, false));
+}
+
+static void expose(void) {
+    int dock = -1, layer18 = -1, layer20 = -1;
+    strafe_expose_counts(&dock, &layer18, &layer20);
+    assert(dock >= 0 && layer18 >= 0 && layer20 >= 0);
+    assert(layer18 + layer20 <= dock);
+    strafe_expose_counts(NULL, NULL, NULL); // NULL out-parameters are allowed
+}
+
 int main(void) {
-    events(); invalid(); topology();
-    puts("CStrafe: 32 event round-trips, raw payload/replacement, invalid input/wire and topology tests passed (no posting).");
+    events(); invalid(); topology(); ramps(); expose();
+    puts("CStrafe: 32 instant + 24 ramp event round-trips, invalid input/wire, topology and overlay-census tests passed (no posting).");
     return 0;
 }

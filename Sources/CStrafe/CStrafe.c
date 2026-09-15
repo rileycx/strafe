@@ -114,6 +114,53 @@ CGEventRef strafe_create_switch_event(StrafeDirection direction, double velocity
     return ev;
 }
 
+// One ramp phase for the animated Transition speed presets (SPEC §1.4):
+// caller-chosen progress/velocity magnitudes, direction applied internally
+// like the instant creator above. Unlike the instant shape — whose augmented
+// form carries velocity on Ended only — a ramp carries its per-phase velocity
+// on every phase; the climbing `changed` stream is what makes the WindowServer
+// run its slide instead of flicking.
+CGEventRef strafe_create_ramp_event(StrafeDirection direction, double velocity,
+                                   int64_t phase, double progress, bool augmented,
+                                   bool inverted) {
+    if ((direction != StrafeDirectionLeft && direction != StrafeDirectionRight) ||
+        (phase != 1 && phase != 2 && phase != 4 && phase != 8) ||
+        !isfinite(velocity) || velocity < 0 || velocity > FLT_MAX ||
+        !isfinite(progress) || progress < 0) return NULL;
+    const bool isRight = (direction == StrafeDirectionRight) != inverted;
+    const double signedProgress = isRight ? progress : -progress;
+    const double vel = isRight ? velocity : -velocity;
+    int32_t fixed;
+    if (augmented && (!strafe_fixed(signedProgress, &fixed) || !strafe_fixed(vel, &fixed))) return NULL;
+
+    CGEventRef ev = CGEventCreate(NULL);
+    if (!ev) { return NULL; }
+    CGEventSetIntegerValueField(ev, kCGEventSourceUserData, kStrafeEventMarker);
+    CGEventSetIntegerValueField(ev, kCGEventSourceUnixProcessID, getpid());
+    CGEventSetIntegerValueField(ev, kCGSEventTypeField,            kCGSEventDockControl);
+    CGEventSetIntegerValueField(ev, kCGEventGestureHIDType,        kIOHIDEventTypeDockSwipe);
+    CGEventSetIntegerValueField(ev, kCGEventGesturePhase,          phase);
+    CGEventSetDoubleValueField (ev, kCGEventGestureSwipeProgress,  signedProgress);
+    CGEventSetIntegerValueField(ev, kCGEventGestureSwipeMotion,    kCGGestureMotionHorizontal);
+    CGEventSetDoubleValueField(ev, kCGEventGestureSwipeVelocityX, vel);
+    CGEventSetDoubleValueField(ev, kCGEventGestureSwipeVelocityY, vel);
+    if (augmented) {
+        CGEventSetIntegerValueField(ev, (CGEventField)134, phase);
+        CGEventSetDoubleValueField(ev, (CGEventField)125, 0.1);
+        CGEventSetDoubleValueField(ev, (CGEventField)138, 3.0);
+        CGEventSetDoubleValueField(ev, (CGEventField)169, (double)mach_absolute_time());
+        CGEventRef result = strafe_augment(ev);
+        CFRelease(ev);
+        // Same macOS 27 source-data omission as above: re-stamp after rebuild.
+        if (result) {
+            CGEventSetIntegerValueField(result, kCGEventSourceUserData, kStrafeEventMarker);
+            CGEventSetIntegerValueField(result, kCGEventSourceUnixProcessID, getpid());
+        }
+        return result;
+    }
+    return ev;
+}
+
 bool strafe_post_switch_gesture(StrafeDirection direction, double velocity) {
     // Legacy synchronous benchmark path. Prebuild to avoid partial allocation posts.
     CGEventRef events[3] = {NULL, NULL, NULL};
@@ -334,14 +381,17 @@ uint64_t strafe_tap_event_mask(void) {
 }
 
 // --- Overlay / Exposé detection (SPEC §2.5) -------------------------------
-// Heuristic: count Dock-owned windows at layers 18 and 20.
-bool strafe_is_expose_active(void) {
+// Heuristic: count Dock-owned windows at layers 18 and 20. Counts are exposed
+// separately so the mc-probe diagnostic can report what a given macOS version
+// actually shows while an overlay is open.
+void strafe_expose_counts(int *dockWindows, int *layer18, int *layer20) {
+    if (dockWindows) *dockWindows = 0;
+    if (layer18) *layer18 = 0;
+    if (layer20) *layer20 = 0;
     CFArrayRef windows = CGWindowListCopyWindowInfo(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
-    if (!windows) { return false; }
+    if (!windows) { return; }
 
-    int layer18Count = 0;
-    int layer20Count = 0;
     CFIndex count = CFArrayGetCount(windows);
     for (CFIndex i = 0; i < count; i++) {
         CFDictionaryRef win = (CFDictionaryRef)CFArrayGetValueAtIndex(windows, i);
@@ -351,14 +401,20 @@ bool strafe_is_expose_active(void) {
         if (!owner || CFStringCompare(owner, CFSTR("Dock"), 0) != kCFCompareEqualTo) {
             continue;
         }
+        if (dockWindows) *dockWindows += 1;
         CFNumberRef layerNum = (CFNumberRef)CFDictionaryGetValue(win, kCGWindowLayer);
         if (!layerNum) { continue; }
         int layer = 0;
         CFNumberGetValue(layerNum, kCFNumberIntType, &layer);
-        if (layer == 18) { layer18Count++; }
-        else if (layer == 20) { layer20Count++; }
+        if (layer == 18) { if (layer18) *layer18 += 1; }
+        else if (layer == 20) { if (layer20) *layer20 += 1; }
     }
     CFRelease(windows);
+}
+
+bool strafe_is_expose_active(void) {
+    int layer18Count = 0, layer20Count = 0;
+    strafe_expose_counts(NULL, &layer18Count, &layer20Count);
 
     // App Exposé: layer18Count > 0 && layer20Count > 0 && layer20Count <= layer18Count.
     // Mission Control: layer18Count > 0 && layer20Count > layer18Count.
