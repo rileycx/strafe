@@ -186,7 +186,7 @@ Environment configuration (strictly parsed at startup):
 | `STRAFE_EVENT_PROFILE` | `auto`; resolves augmented on27+, legacy earlier. Also `legacy`, `macos27` |
 | `STRAFE_PHASE_GAP_MS` | 10 for augmented, 0 legacy; explicit0–100 |
 | `STRAFE_INVERT_DIRECTION` | **1 for augmented**, 0 legacy; explicit0/1 overrides |
-| `STRAFE_INVERT_SWIPE_DIRECTION` | **1 on27+**, 0 earlier; independent of output profile |
+| `STRAFE_INVERT_SWIPE_DIRECTION` | **0 by default** (upstream convention; user live-tested both and chose this); explicit1 flips physical mapping |
 | `STRAFE_INTERCEPT_SWIPES` | 1; use0 for the next hotkey-only test |
 | `STRAFE_DIAGNOSTICS` | 0; use1 for logs |
 

@@ -151,7 +151,7 @@ Options are read from the environment at launch:
 | `STRAFE_EVENT_PROFILE` | `auto` (macOS 27+ payload, older OS legacy), `legacy`, `macos27` |
 | `STRAFE_PHASE_GAP_MS` | `0`–`100`; default `10` for macOS27, `0` for legacy |
 | `STRAFE_INVERT_DIRECTION` | Defaults to `1` for augmented output, `0` for legacy; explicit `0`/`1` overrides |
-| `STRAFE_INVERT_SWIPE_DIRECTION` | Defaults to `1` on macOS 27+, `0` earlier; independent physical-progress mapping |
+| `STRAFE_INVERT_SWIPE_DIRECTION` | Defaults to `0` (upstream convention: positive progress means right); `1` flips the physical-progress mapping |
 | `STRAFE_INTERCEPT_SWIPES` | `1` (default); `0` leaves trackpad gestures native for hotkey-only testing |
 | `STRAFE_DIAGNOSTICS` | `0` (default), `1` for request/gesture diagnostics |
 

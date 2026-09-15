@@ -14,6 +14,10 @@ enum SwitchDiagnostics {
     static func flush() { queue.sync {} }
 }
 
+/// Launch-time behavior switches, parsed strictly from the environment.
+/// Defaults select the legacy output on older systems and the augmented
+/// macOS 27 output (with inverted synthetic direction) on 27+. Every value
+/// is validated; unknown keys are ignored and malformed values are fatal.
 struct SwitchConfiguration: Sendable {
     let profile: String
     let augmented: Bool
@@ -54,7 +58,10 @@ struct SwitchConfiguration: Sendable {
         return try SwitchConfiguration(
             profile: profile, augmented: augmented, phaseGapMS: gap,
             inverted: flag("STRAFE_INVERT_DIRECTION", default: augmented),
-            invertSwipeDirection: flag("STRAFE_INVERT_SWIPE_DIRECTION", default: osMajorVersion >= 27),
+            // Upstream mapping: positive physical progress means the next
+            // (right) workspace. Set STRAFE_INVERT_SWIPE_DIRECTION=1 to flip
+            // the physical-progress mapping without touching output.
+            invertSwipeDirection: flag("STRAFE_INVERT_SWIPE_DIRECTION", default: false),
             interceptSwipes: flag("STRAFE_INTERCEPT_SWIPES", default: true),
             diagnostics: flag("STRAFE_DIAGNOSTICS")
         )

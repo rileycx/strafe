@@ -84,7 +84,11 @@ struct SwitchEngineTests {
 
     func testConfigurationDefaultsAndInvalidValues() throws {
         let modern = try SwitchConfiguration.load(environment: [:], osMajorVersion: 27)
-        precondition(modern.augmented && modern.phaseGapMS == 10 && modern.inverted && modern.invertSwipeDirection)
+        precondition(modern.augmented && modern.phaseGapMS == 10 && modern.inverted)
+        precondition(!modern.invertSwipeDirection)
+        let flipped = try SwitchConfiguration.load(
+            environment: ["STRAFE_INVERT_SWIPE_DIRECTION": "1"], osMajorVersion: 27)
+        precondition(flipped.invertSwipeDirection)
         let legacy = try SwitchConfiguration.load(environment: [:], osMajorVersion: 26)
         let forced = try config()
         precondition(!legacy.augmented && !forced.augmented)
@@ -260,17 +264,18 @@ struct SwitchEngineTests {
             if vertical { result.setIntegerValueField(CGEventField(rawValue: 123)!, value: 2) }
             return result
         }
-        // Negative physical progress means the next workspace on this host.
+        // Upstream convention (now the default): negative physical progress
+        // means the previous (left) workspace, positive means right.
         for phase: Int64 in [1, 1, 2, 2, 4] {
             let sample = event(phase)
             precondition(interceptor.handle(type: CGEventType(rawValue: 30)!, event: sample) == nil,
                          "phase=\(phase) pid=\(strafe_event_source_pid(sample)) marker=\(strafe_event_is_strafe(sample)) type=\(strafe_event_cgs_type(sample)) hid=\(strafe_event_hid_type(sample)) axis=\(strafe_event_swipe_motion(sample))")
         }
-        precondition(sink.directions == [.right])
+        precondition(sink.directions == [.left])
         for phase: Int64 in [1, 2, 4] {
             precondition(interceptor.handle(type: CGEventType(rawValue: 30)!, event: event(phase, right: true)) == nil)
         }
-        precondition(sink.directions == [.right, .left])
+        precondition(sink.directions == [.left, .right])
         // Generic HID32 and vertical Dock gestures remain native, even while
         // Strafe owns a horizontal swipe. They must not drive or clear its latch.
         _ = interceptor.handle(type: CGEventType(rawValue: 30)!, event: event(1))
@@ -280,7 +285,7 @@ struct SwitchEngineTests {
         }
         _ = interceptor.handle(type: CGEventType(rawValue: 30)!, event: event(2))
         _ = interceptor.handle(type: CGEventType(rawValue: 30)!, event: event(4))
-        precondition(sink.directions == [.right, .left, .right])
+        precondition(sink.directions == [.left, .right, .left])
         let overlay = SwipeInterceptor(engine: sink, configuration: config,
                                        overlayActive: { true }, overlaySnapshot: { false })
         for phase: Int64 in [1, 2, 4] {
