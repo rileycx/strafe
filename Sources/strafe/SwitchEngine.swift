@@ -69,8 +69,17 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
     private let speedLock = NSLock()
     private var speed: TransitionSpeed = .default
     private var activeGapMS: Double = 0
-    private var anomalies = 0
     private var lastOverlaySeen: TimeInterval = 0
+    /// Consecutive delivery-class failures (unexpectedChange,
+    /// observationTimedOut, postFailed, topologyUnavailable). One is expected
+    /// from time to time — a mashed swipe into Mission Control's close
+    /// animation, a rearranging Space — so interception pauses only after
+    /// three in a row, which means the replacement path itself is broken.
+    /// Any success resets the count.
+    private var consecutiveFailures = 0
+    private static let maxConsecutiveFailures = 3
+    private var anomalySignature: String?
+    private var anomalyStreak = 0
 
     struct Topology: Sendable {
         let display: String
@@ -195,7 +204,8 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         guard active == nil, !pending.isEmpty else { return }
         let request = pending.removeFirst()
         active = request
-        anomalies = 0
+        anomalySignature = nil
+        anomalyStreak = 0
         guard !overlayUp() else {
             finish(.failure(.overlayActive), dropPending: true)
             return
@@ -290,12 +300,20 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         }
     }
 
-    /// A single odd topology read proves nothing: Mission Control's close
-    /// animation can leave CGS mid-flight for a poll or two. Only consecutive
-    /// anomalies fail the request; any clean read resets the count.
+    /// An odd topology read proves nothing on its own: Mission Control's close
+    /// animation can leave CGS mid-flight for hundreds of milliseconds. A
+    /// *changing* anomaly keeps polling until the deadline, but the *same*
+    /// anomalous destination three polls running means the switch genuinely
+    /// went somewhere wrong — fail fast so the next swipe starts from truth.
     private func anomalous(_ request: Request, _ message: String, live: Topology) {
-        anomalies += 1
-        guard anomalies >= 2 else {
+        let signature = "\(live.index):\(live.id):\(live.count)"
+        if signature == anomalySignature {
+            anomalyStreak += 1
+        } else {
+            anomalySignature = signature
+            anomalyStreak = 1
+        }
+        guard anomalyStreak >= 3 else {
             trace("request=\(request.id) transient \(message) live={\(live.summary)}")
             queue.asyncAfter(deadline: .now() + 0.025) { self.poll() }
             return
@@ -344,7 +362,8 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
             anomalous(request, "transition reverted", live: live)
             return
         }
-        anomalies = 0
+        anomalySignature = nil
+        anomalyStreak = 0
         queue.asyncAfter(deadline: .now() + 0.025) { self.poll() }
     }
 
@@ -352,20 +371,29 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         admission.lock()
         admitted -= 1
         admission.unlock()
-        if case .failure(let error) = result {
+        switch result {
+        case .success:
+            consecutiveFailures = 0
+        case .failure(let error):
             SwitchDiagnostics.log("request=\(request.id) direction=\(request.direction) failed: \(error)")
             switch error {
             case .unexpectedChange, .observationTimedOut, .postFailed, .topologyUnavailable:
                 // Grace period: an overlay was up within the last second, so
                 // this failure likely describes Mission Control's close
-                // animation settling — not a broken replacement path. Never
-                // disable interception over that.
+                // animation settling — not a broken replacement path. Neither
+                // count nor report it.
                 if error == .unexpectedChange || error == .observationTimedOut,
                    ProcessInfo.processInfo.systemUptime - lastOverlaySeen < 1.0 {
                     SwitchDiagnostics.log("request=\(request.id) failure callback suppressed (recent overlay)")
-                } else {
-                    deliveryFailureHandler?(error)
+                    break
                 }
+                consecutiveFailures += 1
+                guard consecutiveFailures >= Self.maxConsecutiveFailures else {
+                    SwitchDiagnostics.log("request=\(request.id) failure \(consecutiveFailures)/\(Self.maxConsecutiveFailures) (interception stays on)")
+                    break
+                }
+                consecutiveFailures = 0
+                deliveryFailureHandler?(error)
             default: break
             }
         }

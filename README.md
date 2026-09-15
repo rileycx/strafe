@@ -189,10 +189,12 @@ The initial live test confirmed instant switching but reversed output signs.
 The current build corrects those signs separately from physical swipe progress.
 Mission Control, App Exposé and Show Desktop gestures pass through while an
 overlay is detected (Dock Accessibility notifications plus a window-layer
-snapshot); a failure within a second of an overlay can never disable trackpad
-interception, and a single odd topology read never fails a switch. If overlay
-detection misbehaves on your macOS version, run `strafe mc-probe`, open and
-close Mission Control while it samples, and share the log.
+snapshot). A failure within a second of an overlay is never counted, a merely
+changing topology never fails a switch early, and interception pauses only
+after three delivery failures in a row — so mashing swipes through Mission
+Control's close animation can't kill it. If overlay detection misbehaves on
+your macOS version, run `strafe mc-probe`, open and close Mission Control
+while it samples, and share the log.
 If delivery times out, goes to an unexpected Space, or cannot be prepared,
 trackpad interception is disabled automatically; it can be re-enabled from the
 menu. Hotkeys remain available. For initial hotkey-only diagnosis, prefix the

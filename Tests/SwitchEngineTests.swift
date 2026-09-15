@@ -25,10 +25,11 @@ struct SwitchEngineTests {
         try tests.testPhysicalGestureMappingAndPassthrough()
         try tests.testRampSpeedPostsBeganChangedStreamAndEnded()
         try tests.testTransientAnomalyRecovers()
-        try tests.testPersistentAnomalyStillFailsAndReports()
+        try tests.testSingleDeliveryFailureKeepsInterception()
+        try tests.testThreeConsecutiveFailuresPauseInterception()
         try tests.testOverlayGraceSuppressesFailureCallback()
         SwitchDiagnostics.flush()
-        print("Swift: 13 configuration/engine/interceptor tests passed (mock delivery; no events posted).")
+        print("Swift: 14 configuration/engine/interceptor tests passed (mock delivery; no events posted).")
     }
     private final class Desktop: @unchecked Sendable {
         let lock = NSLock()
@@ -115,11 +116,9 @@ struct SwitchEngineTests {
         let engine = GestureSwitchEngine(configuration: try config(), dependencies: desktop.dependencies)
         let failed = CompletionWaiter()
         let dropped = CompletionWaiter()
-        let fallback = CompletionWaiter()
-        engine.setDeliveryFailureHandler { error in
-            guard case .observationTimedOut = error else { fatalError("Unexpected fallback: \(error)") }
-            fallback.fulfill()
-        }
+        // A lone timeout must not pause interception; the three-strikes rule
+        // is covered by testThreeConsecutiveFailuresPauseInterception.
+        engine.setDeliveryFailureHandler { _ in fatalError("Single timeout must not pause interception") }
         try engine.switchSpace(.left) { result in
             guard case .failure(.observationTimedOut) = result else { fatalError("Expected timeout: \(result)") }
             failed.fulfill()
@@ -130,7 +129,6 @@ struct SwitchEngineTests {
         }
         failed.wait()
         dropped.wait()
-        fallback.wait()
         precondition(desktop.snapshot().0 == 1)
         precondition(desktop.snapshot().1 == [1, 2, 4])
         desktop.enableMoves()
@@ -321,25 +319,69 @@ struct SwitchEngineTests {
         precondition(scripted.phases == [1, 2, 4])
     }
 
-    func testPersistentAnomalyStillFailsAndReports() throws {
+    func testSingleDeliveryFailureKeepsInterception() throws {
         let scripted = Scripted()
         let origin = scripted.topology(display: "display-A", index: 1, id: 11)
         let anomaly = scripted.topology(display: "display-A", index: 0, id: 99)
         scripted.reads = [origin, origin, anomaly]
         scripted.overlays = [false]
         let engine = GestureSwitchEngine(configuration: try config(), dependencies: scripted.dependencies)
-        let reported = CompletionWaiter()
-        engine.setDeliveryFailureHandler { error in
-            guard case .unexpectedChange = error else { fatalError("Unexpected fallback: \(error)") }
-            reported.fulfill()
-        }
+        engine.setDeliveryFailureHandler { _ in fatalError("Single failure must not pause interception") }
         let finished = CompletionWaiter()
         try engine.switchSpace(.right) { result in
             guard case .failure(.unexpectedChange) = result else { fatalError("Expected mismatch: \(result)") }
             finished.fulfill()
         }
         finished.wait()
-        reported.wait()
+    }
+
+    func testThreeConsecutiveFailuresPauseInterception() throws {
+        let desktop = Desktop()
+        desktop.enableMoves()
+        desktop.index = 2
+        let engine = GestureSwitchEngine(configuration: try config(), dependencies: desktop.dependencies)
+        final class Counter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var count = 0
+            func increment() { lock.lock(); count += 1; lock.unlock() }
+            var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+        }
+        let reports = Counter()
+        engine.setDeliveryFailureHandler { error in
+            guard case .unexpectedChange = error else { fatalError("Unexpected fallback: \(error)") }
+            reports.increment()
+        }
+        func attempt(_ direction: SwitchDirection, expect expected: SwitchEngineError) throws {
+            let finished = CompletionWaiter()
+            try engine.switchSpace(direction) { result in
+                guard case .failure(let error) = result, error == expected else {
+                    fatalError("Expected \(expected): \(result)")
+                }
+                finished.fulfill()
+            }
+            finished.wait()
+        }
+        func reportsNow() -> Int { reports.value }
+        // Three wrong landings in a row: silent, silent, then pause.
+        desktop.reverse = true
+        try attempt(.right, expect: .unexpectedChange)
+        try attempt(.left, expect: .unexpectedChange)
+        precondition(reportsNow() == 0)
+        try attempt(.right, expect: .unexpectedChange)
+        precondition(reportsNow() == 1)
+        // A success resets the count: the next lone failure stays silent.
+        desktop.reverse = false
+        for direction in [SwitchDirection.left, .right] {
+            let finished = CompletionWaiter()
+            try engine.switchSpace(direction) { result in
+                guard case .success = result else { fatalError("Expected recovery: \(result)") }
+                finished.fulfill()
+            }
+            finished.wait()
+        }
+        desktop.reverse = true
+        try attempt(.right, expect: .unexpectedChange)
+        precondition(reportsNow() == 1)
     }
 
     func testOverlayGraceSuppressesFailureCallback() throws {
