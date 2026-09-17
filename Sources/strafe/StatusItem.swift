@@ -20,9 +20,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         title: "Accessibility granted: —", action: nil, keyEquivalent: ""
     )
 
-    /// The one `UserDefaults` key behind "Hide from menu bar". A stored `true`
-    /// means the icon stays hidden across launches; the tap and hotkeys keep
-    /// running either way. Cleared again by `show()`.
     static let hiddenStorageKey = "menuBarIconHidden"
 
     /// Shipped version, read from the bundle so `VERSION` stays the single
@@ -85,15 +82,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(quit)
 
         statusItem.menu = menu
-        // Honor a hide chosen in an earlier session. The item is created, then
-        // hidden, so `show()` can bring it back without rebuilding the menu.
         statusItem.isVisible = !Preferences.store.bool(forKey: Self.hiddenStorageKey)
         refresh()
     }
 
-    /// Put the icon back in the menu bar. Called when the user opens strafe
-    /// while it is already running (see `AppDelegate.applicationShouldHandleReopen`),
-    /// which is the only way back once the icon is hidden.
+    // Show the icon again. Called when the app is reopened while it is already running.
     func show() {
         Preferences.store.removeObject(forKey: Self.hiddenStorageKey)
         statusItem.isVisible = true
@@ -148,9 +141,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refresh()
     }
 
-    /// Hide the icon but keep strafe running. Confirmed first, because an
-    /// accessory app with no icon has no visible way back; the alert says
-    /// what that way is.
+    // Hide the menu bar icon but keep running.
     @objc private func hideFromMenuBar() {
         let alert = NSAlert()
         alert.messageText = "Hide strafe from the menu bar?"
