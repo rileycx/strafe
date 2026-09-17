@@ -20,8 +20,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         title: "Accessibility granted: —", action: nil, keyEquivalent: ""
     )
 
-    static let hiddenStorageKey = "menuBarIconHidden"
-
     /// Shipped version, read from the bundle so `VERSION` stays the single
     /// source of truth (`Scripts/bundle.sh` stamps it into Info.plist). A bare
     /// `swift build` binary has no Info.plist, and "dev" is the honest answer
@@ -82,13 +80,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(quit)
 
         statusItem.menu = menu
-        statusItem.isVisible = !Preferences.store.bool(forKey: Self.hiddenStorageKey)
         refresh()
     }
 
     // Show the icon again. Called when the app is reopened while it is already running.
     func show() {
-        Preferences.store.removeObject(forKey: Self.hiddenStorageKey)
         statusItem.isVisible = true
     }
 
@@ -141,7 +137,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refresh()
     }
 
-    // Hide the menu bar icon but keep running.
+    // Hide the menu bar icon until reopen or relaunch; not persisted.
     @objc private func hideFromMenuBar() {
         let alert = NSAlert()
         alert.messageText = "Hide strafe from the menu bar?"
@@ -157,8 +153,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // An accessory app is never frontmost, so bring the alert forward.
         NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        Preferences.store.set(true, forKey: Self.hiddenStorageKey)
         statusItem.isVisible = false
     }
 
