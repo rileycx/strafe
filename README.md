@@ -137,6 +137,10 @@ The app is about 1,486 lines of Swift and C with no third-party dependencies —
   Nothing slower is offered. The next step up measures ~170 ms, which is
   macOS's own animated switch — and that is already what you get with strafe
   turned off.
+
+- **Hide from menu bar** *(menu bar › Hide from menu bar)* — hide the strafe
+  icon from the menu bar. The app keeps running: swipes and shortcuts still work.
+  To get the icon back, open strafe again.
 - **CLI:**
 
   ```
