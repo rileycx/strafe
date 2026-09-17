@@ -20,6 +20,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         title: "Accessibility granted: —", action: nil, keyEquivalent: ""
     )
 
+    /// The one `UserDefaults` key behind "Hide from menu bar". A stored `true`
+    /// means the icon stays hidden across launches; the tap and hotkeys keep
+    /// running either way. Cleared again by `show()`.
+    static let hiddenStorageKey = "menuBarIconHidden"
+
     /// Shipped version, read from the bundle so `VERSION` stays the single
     /// source of truth (`Scripts/bundle.sh` stamps it into Info.plist). A bare
     /// `swift build` binary has no Info.plist, and "dev" is the honest answer
@@ -70,12 +75,28 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
+        let hide = NSMenuItem(
+            title: "Hide from menu bar", action: #selector(hideFromMenuBar), keyEquivalent: ""
+        )
+        hide.target = self
+        menu.addItem(hide)
         let quit = NSMenuItem(title: "Quit strafe", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
 
         statusItem.menu = menu
+        // Honor a hide chosen in an earlier session. The item is created, then
+        // hidden, so `show()` can bring it back without rebuilding the menu.
+        statusItem.isVisible = !Preferences.store.bool(forKey: Self.hiddenStorageKey)
         refresh()
+    }
+
+    /// Put the icon back in the menu bar. Called when the user opens strafe
+    /// while it is already running (see `AppDelegate.applicationShouldHandleReopen`),
+    /// which is the only way back once the icon is hidden.
+    func show() {
+        Preferences.store.removeObject(forKey: Self.hiddenStorageKey)
+        statusItem.isVisible = true
     }
 
     /// The "Transition speed" submenu: one checkable item per preset.
@@ -125,6 +146,29 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         engine?.setTransitionSpeed(speed)
         speed.persist()
         refresh()
+    }
+
+    /// Hide the icon but keep strafe running. Confirmed first, because an
+    /// accessory app with no icon has no visible way back; the alert says
+    /// what that way is.
+    @objc private func hideFromMenuBar() {
+        let alert = NSAlert()
+        alert.messageText = "Hide strafe from the menu bar?"
+        alert.informativeText = """
+            strafe stays running in the background. Swipes and keyboard \
+            shortcuts keep working.
+
+            To bring the icon back or to quit, open strafe again from \
+            Applications or Spotlight.
+            """
+        alert.addButton(withTitle: "Hide")
+        alert.addButton(withTitle: "Cancel")
+        // An accessory app is never frontmost, so bring the alert forward.
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        Preferences.store.set(true, forKey: Self.hiddenStorageKey)
+        statusItem.isVisible = false
     }
 
     @objc private func quit() {

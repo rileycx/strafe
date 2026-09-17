@@ -149,6 +149,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         interceptor.start()
     }
 
+    /// Launch Services sends this when the app is opened while already
+    /// running. It is the way back from "Hide from menu bar": there is no
+    /// window and no icon, so opening the app again is the only handle left.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        statusItem?.show()
+        return false
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         interceptor?.teardown()
         hotkeys?.unregister()
