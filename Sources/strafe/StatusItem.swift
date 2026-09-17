@@ -34,6 +34,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
+        // AppKit restores the previous visibility; every new launch starts visible.
+        statusItem.isVisible = true
+
         if let button = statusItem.button {
             button.image = NSImage(
                 systemSymbolName: "rectangle.on.rectangle",
@@ -137,7 +140,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refresh()
     }
 
-    // Hide the menu bar icon until reopen or relaunch; not persisted.
+    // AppKit saves visibility; initialization resets it on the next launch.
     @objc private func hideFromMenuBar() {
         let alert = NSAlert()
         alert.messageText = "Hide strafe from the menu bar?"

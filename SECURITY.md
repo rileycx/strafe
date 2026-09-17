@@ -135,8 +135,8 @@ Each of these is verifiable with a single grep over `Sources/`.
   art, it does **not** shell out to `tccutil` or anything else
   (`grep -rniE 'Process\(\)|/usr/bin|/bin/|tccutil' Sources/` — no spawns).
 
-- **No persistence beyond one menu setting.** strafe stores no databases and no
-  caches. It writes exactly one `UserDefaults` value — `transitionSpeed`, an
+- **Persistence is limited to menu settings.** strafe stores no databases and no
+  caches. Its own code writes one `UserDefaults` value — `transitionSpeed`, an
   integer 0–2 recording which **Transition speed** preset you picked in the menu
   (`TransitionSpeed`, `Sources/strafe/TransitionSpeed.swift` line 101). It
   changes the shape of the gesture strafe *posts*; it has no effect on what the
@@ -151,7 +151,11 @@ Each of these is verifiable with a single grep over `Sources/`.
   grep -rn 'UserDefaults(' Sources/       # one hit: the suite in Preferences.swift
   ```
 
-  No usage data, no history, no coordinates — the plist holds one integer.
+  AppKit also saves menu-bar item visibility automatically when the icon is
+  hidden or shown. strafe resets visibility on every fresh launch, so hiding
+  the icon only lasts until the app is reopened or restarted.
+
+  No usage data, no history, no coordinates are stored.
   Deleting `strafe.app` leaves behind only that plist, which
   `defaults delete com.rileycx.strafe` removes (see README → Uninstall).
 

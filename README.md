@@ -140,7 +140,8 @@ The app is about 1,486 lines of Swift and C with no third-party dependencies —
 
 - **Hide from menu bar** *(menu bar › Hide from menu bar)* — hide the strafe
   icon from the menu bar. The app keeps running: swipes and shortcuts still work.
-  To get the icon back, open strafe again.
+  To get the icon back, open strafe again. The icon also returns on every fresh
+  launch.
 - **CLI:**
 
   ```
@@ -158,9 +159,9 @@ swipe and replace it with the instant one.
 
 The tap sees only trackpad gesture and dock-control events. It does **not** see
 keystrokes: the event mask excludes key events entirely, and strafe has no
-network, telemetry, file access, or subprocess code. It stores exactly one
-preference: which transition speed you picked. Every one of those claims is
-grep-verifiable — see [SECURITY.md](SECURITY.md) for the exact file and line
+network, telemetry, file access, or subprocess code. It saves your transition
+speed preference; AppKit also saves menu-bar icon visibility, which strafe resets
+on launch. See [SECURITY.md](SECURITY.md) for the exact file and line
 pointers.
 
 To revoke: **System Settings › Privacy & Security › Accessibility**, and toggle
