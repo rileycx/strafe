@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 
 // Compile the production manager with an isolated preferences domain and
 // replacement Carbon registration functions. No real shortcuts are captured.
@@ -15,6 +16,7 @@ struct TestEngine: SwitchEngine {
 }
 @_silgen_name("test_active_hotkeys") private func activeHotkeys() -> UInt32
 @_silgen_name("test_registration_count") private func registrationCount() -> UInt32
+@_silgen_name("test_reject_key") private func rejectKey(_ key: UInt32)
 
 @main struct HotkeyManagerTests {
     @MainActor static func main() {
@@ -45,7 +47,33 @@ struct TestEngine: SwitchEngine {
             precondition(activeHotkeys() == 0)
             manager.start()
             precondition(activeHotkeys() == 2)
+            let custom = KeyboardShortcut(keyCode: UInt32(kVK_ANSI_J), modifiers: UInt32(cmdKey | shiftKey))
+            precondition(manager.updateShortcut(custom, for: .left) == nil)
+            precondition(ShortcutAction.left.storedShortcut == custom && activeHotkeys() == 2)
+            precondition(manager.updateShortcut(custom, for: .right) != nil)
+            precondition(ShortcutAction.right.storedShortcut == ShortcutAction.right.defaultShortcut)
+            precondition(manager.updateShortcut(KeyboardShortcut(keyCode: 0, modifiers: 0), for: .left) != nil)
+            precondition(manager.updateShortcut(KeyboardShortcut(keyCode: UInt32(kVK_ANSI_Q), modifiers: UInt32(cmdKey)), for: .left) != nil)
+            precondition(custom.displayName.hasPrefix("⇧⌘"))
+            manager.setRecording(true)
+            precondition(activeHotkeys() == 0)
+            manager.setRecording(false)
+            precondition(activeHotkeys() == 2)
+            rejectKey(UInt32(kVK_ANSI_K))
+            let conflicting = KeyboardShortcut(keyCode: UInt32(kVK_ANSI_K), modifiers: UInt32(controlKey))
+            precondition(manager.updateShortcut(conflicting, for: .left) != nil)
+            precondition(ShortcutAction.left.storedShortcut == custom && activeHotkeys() == 2)
+            precondition(manager.registrationError == nil)
+            rejectKey(UInt32.max)
+            precondition(manager.updateShortcut(nil, for: .right) == nil)
+            precondition(ShortcutAction.right.storedShortcut == nil && activeHotkeys() == 1)
+            manager.stop()
+            manager.start()
+            precondition(activeHotkeys() == 1 && ShortcutAction.left.storedShortcut == custom)
+            precondition(manager.restoreDefaultShortcuts() == nil && activeHotkeys() == 2)
+            precondition(ShortcutAction.left.storedShortcut == ShortcutAction.left.defaultShortcut)
             print("PASS: default, repeated enable/disable, and restart")
+            print("PASS: customization, persistence, duplicate/reserved validation, recorder suspension, conflict rollback, clear, restore")
             return
         }
         precondition(mode == "listen")

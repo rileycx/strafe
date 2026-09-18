@@ -69,9 +69,9 @@ Space switching instant. Steps:
 2. Run ./Scripts/bundle.sh and move build/strafe.app to /Applications.
 3. Launch it, then open System Settings > Privacy & Security > Accessibility
    so I can grant it permission. Remove any stale strafe entries first.
-4. Wait for me to confirm I granted it, then quit strafe from the menu-bar
-   icon and relaunch it — the event tap is only created at launch, so the
-   grant does nothing until the app restarts.
+4. Wait for me to confirm I granted it, then check strafe's menu reports
+   "Swipe interception is active". It retries automatically when permission
+   becomes available; a stale grant after rebuilding may still need a relaunch.
 5. Have me test a 3-finger swipe between Spaces. It should be instant.
 ```
 
@@ -107,9 +107,10 @@ git clone https://github.com/rileycx/strafe strafe && cd strafe
 ```
 
 `install.sh` builds `strafe.app`, copies it to `/Applications`, launches it, and
-opens the Accessibility pane. Grant permission there, then quit strafe from its
-menu-bar icon and launch it again — the event tap is created at launch, so the
-grant does nothing until the app restarts.
+opens the Accessibility pane. Grant permission there, then check the menu for
+**Swipe interception is active**. strafe checks permission and tap health once
+a second and retries failed creation automatically. After replacing an ad-hoc
+signed build, macOS may still require a fresh permission grant and relaunch.
 
 Read the script first if you like; it's about 90 lines and does nothing
 privileged.
@@ -147,14 +148,21 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
 
 - **3-finger swipe** — just works once strafe is running and has Accessibility.
   Swipe left/right between Spaces and the switch is instant.
-- **Keyboard** — `ctrl`+`opt`+`←` and `ctrl`+`opt`+`→` switch Spaces.
-  Turn off **Space-switch hotkeys** in the menu if these conflict with another
-  app. Swipes keep working. `strafe hotkeys off` and `strafe hotkeys on` also
-  update a running copy without restarting it.
+- **Keyboard** — `ctrl`+`opt`+`←` and `ctrl`+`opt`+`→` switch Spaces by default.
+  Open **Settings…** from the menu-bar icon to record a shortcut for each
+  direction. Use Command, Control, or Option with a key, or a function key;
+  Escape cancels recording. Changes apply immediately and survive a restart.
+  Shortcuts can be cleared or restored to defaults. Duplicate shortcuts and
+  registration conflicts are reported without replacing the previous binding.
+  **Space-switch hotkeys**, `strafe hotkeys off`, and `strafe hotkeys on` toggle
+  shortcuts independently of swipe interception.
+- **Settings…** — configure keyboard shortcuts and transition speed in a native
+  window. Command-comma opens settings while strafe is active.
 - **Menu bar** — click the strafe icon to enable/disable interception, check
-  whether Accessibility has been granted, and see which version you're running
+  whether swipe interception is actually active, and see which version you're running
   and where to get a newer one.
-- **Transition speed** *(menu bar › Transition speed)* — if instant is too
+- **Transition speed** *(Settings › Space transitions, or menu bar › Transition speed)*
+  — applies to both trackpad swipes and keyboard shortcuts. If instant is too
   abrupt, you can trade some of it back for animation:
 
   | preset | measured | what it is |
@@ -175,6 +183,7 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
 
   ```
   strafe switch left|right   # switch once and exit
+  strafe settings           # open settings for the running app, or start it
   strafe status              # print accessibility / tap status
   strafe speed [preset]      # show or set transition speed
   strafe hotkeys [on|off]    # show or set Space-switch hotkeys
@@ -188,8 +197,9 @@ create an *active* event tap — the kind that can suppress the slow animated
 swipe and replace it with the instant one.
 
 The tap sees only trackpad gesture and dock-control events. It does **not** see
-keystrokes: the event mask excludes key events entirely, and strafe has no
-network, telemetry, file access, or subprocess code. It saves your transition
+keystrokes: the event mask excludes key events entirely. The settings recorder
+receives key combinations only in strafe's focused window while recording.
+strafe has no network, telemetry, direct file access, or subprocess code. It saves your transition
 speed and hotkey preferences; AppKit also saves menu-bar icon visibility, which strafe resets
 on launch. See [SECURITY.md](SECURITY.md) for the exact file and line
 pointers.

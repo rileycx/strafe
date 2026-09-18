@@ -44,7 +44,7 @@ fi
 
 # --- Replace any previous install -------------------------------------------
 # Quit a running copy first: the bundle cannot be replaced underneath a live
-# process, and the event tap is only created at launch anyway.
+# process.
 if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
   echo "==> Quitting the running ${APP_NAME}…"
   osascript -e "quit app \"$APP_NAME\"" >/dev/null 2>&1 || pkill -x "$APP_NAME" || true
@@ -85,8 +85,9 @@ Grant Accessibility to strafe in the pane that just opened, then:
   1. Delete any older/stale "strafe" rows in that list first. This build is
      ad-hoc signed, so its identity changes on every rebuild and macOS may show
      a previous build as a separate entry.
-  2. Quit strafe from its menu-bar icon and launch it again. The event tap is
-     created at launch, so the grant does nothing until strafe restarts.
+  2. Check that strafe's menu says "Swipe interception is active". It retries
+     automatically when permission becomes available. If macOS still holds an
+     old build's permission identity, re-grant access and quit/relaunch strafe.
   3. Three-finger swipe between Spaces. It should be instant.
 
 EOF

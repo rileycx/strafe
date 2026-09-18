@@ -11,8 +11,15 @@ let engine = GestureSwitchEngine()
 
 let args = Array(CommandLine.arguments.dropFirst())
 
-if args.isEmpty {
-    runMenuBarApp(engine: engine)
+if args.isEmpty || args == ["settings"] {
+    if args == ["settings"], NSRunningApplication.runningApplications(withBundleIdentifier: Preferences.domain)
+        .contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name("com.rileycx.strafe.showSettings"), object: Preferences.domain,
+            userInfo: nil, deliverImmediately: true)
+    } else {
+        runMenuBarApp(engine: engine, openSettings: args == ["settings"])
+    }
 } else {
     exit(runCLI(args, engine: engine))
 }
@@ -55,9 +62,9 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
         }
 
     case "status":
-        // No live tap in CLI mode, so report tap as not running. CGS symbol
+        // This process cannot report the resident app's event tap. CGS symbol
         // resolution is the capability check per SPEC §1.1 / §6.
-        Permissions.printStatus(tapRunning: false, cgsAvailable: engine.cgsAvailable)
+        Permissions.printStatus(cgsAvailable: engine.cgsAvailable)
         return 0
 
     case "speed":
@@ -109,10 +116,11 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
 
         usage:
           strafe                      start the menu-bar app
+          strafe settings             open the settings window
           strafe switch left|right    switch space once and exit
           strafe status               print accessibility / tap status
           strafe speed [preset]       show or set the swipe transition speed
-          strafe hotkeys [on|off]     show or set the ctrl+opt+arrow hotkeys
+          strafe hotkeys [on|off]     show or set keyboard shortcut enablement
 
         """.utf8))
         return 2
@@ -122,13 +130,13 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
 // MARK: - Menu-bar app mode
 
 @MainActor
-func runMenuBarApp(engine: GestureSwitchEngine) {
+func runMenuBarApp(engine: GestureSwitchEngine, openSettings: Bool = false) {
     let app = NSApplication.shared
     // LSUIElement is also set in Info.plist; set it here so running the raw
     // binary (unbundled) still behaves as an accessory with no dock icon.
     app.setActivationPolicy(.accessory)
 
-    let delegate = AppDelegate(engine: engine)
+    let delegate = AppDelegate(engine: engine, openSettings: openSettings)
     app.delegate = delegate
     app.run()
 }
@@ -139,9 +147,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var interceptor: SwipeInterceptor!
     private var hotkeys: HotkeyManager!
     private var statusItem: StatusItemController!
+    private let openSettingsOnLaunch: Bool
+    private var settingsObserver: (any NSObjectProtocol)?
 
-    init(engine: GestureSwitchEngine) {
+    init(engine: GestureSwitchEngine, openSettings: Bool = false) {
         self.engine = engine
+        self.openSettingsOnLaunch = openSettings
         super.init()
     }
 
@@ -155,6 +166,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.start()
 
         statusItem = StatusItemController(interceptor: interceptor, engine: engine, hotkeys: hotkeys)
+        let appMenu = NSMenu()
+        let rootItem = NSMenuItem()
+        let submenu = NSMenu()
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(StatusItemController.showSettings), keyEquivalent: ",")
+        settingsItem.target = statusItem
+        submenu.addItem(settingsItem)
+        submenu.addItem(.separator())
+        submenu.addItem(NSMenuItem(title: "Quit strafe", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        rootItem.submenu = submenu
+        appMenu.addItem(rootItem)
+        NSApp.mainMenu = appMenu
+        settingsObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.rileycx.strafe.showSettings"), object: Preferences.domain, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.statusItem?.showSettings() }
+        }
 
         // SPEC §2.4 / §5: reset the prediction dictionary to live CGS data
         // whenever the OS reports a real space change, so rapid repeated swipes
@@ -168,6 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         interceptor.start()
+        if openSettingsOnLaunch { statusItem.showSettings() }
     }
 
     // Sent when the app is opened while already running. This how you unhide the menubar icon.
@@ -179,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         interceptor?.teardown()
         hotkeys?.stop()
+        if let settingsObserver { DistributedNotificationCenter.default().removeObserver(settingsObserver) }
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 }

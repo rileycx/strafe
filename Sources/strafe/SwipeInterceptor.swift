@@ -8,19 +8,29 @@ import CStrafe
 ///
 /// Concurrency: the tap source is installed on the **main** run loop in
 /// `kCFRunLoopCommonModes` (SPEC §2.1), so `eventTapCallback` always runs on
-/// the main thread. All mutable state (`swipeTracking`, `swipeFired`,
-/// `isRunning`) is therefore touched only from that single run loop and needs
+/// the main thread. All mutable gesture and tap lifecycle state is
+/// therefore touched only from that single run loop and needs
 /// no locking. The class is `@unchecked Sendable` because the C callback
 /// reaches it through an opaque pointer; that confinement invariant is what
 /// makes the unchecked conformance sound.
 final class SwipeInterceptor: @unchecked Sendable {
     private let engine: SwitchEngine
     private let isExposeActive: () -> Bool
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
+    private var eventTap: (any SwipeEventTap)?
+    private let accessibilityGranted: () -> Bool
+    private let makeTap: (CGEventTapCallBack, UnsafeMutableRawPointer) -> (any SwipeEventTap)?
+    private var recoveryTimer: Timer?
+    private var wantsRunning = false
+    private var reportedCreationFailure = false
 
     /// Whether the tap is currently created and enabled.
-    private(set) var isRunning: Bool = false
+    var isRunning: Bool { eventTap?.isEnabled ?? false }
+
+    var statusDescription: String {
+        if !overrideEnabled { return "Swipe interception is paused" }
+        if !accessibilityGranted() { return "Accessibility permission required" }
+        return isRunning ? "Swipe interception is active" : "Waiting for gesture access — retrying automatically"
+    }
 
     /// Whether interception is active. When false the callback passes every
     /// event through untouched (SPEC §2.2: "only acts when swipeOverrideEnabled").
@@ -31,82 +41,105 @@ final class SwipeInterceptor: @unchecked Sendable {
     private var swipeFired = false
     private var swipePosted = false
 
-    init(engine: SwitchEngine, isExposeActive: @escaping () -> Bool = { strafe_is_expose_active() }) {
+    init(engine: SwitchEngine,
+         isExposeActive: @escaping () -> Bool = { strafe_is_expose_active() },
+         accessibilityGranted: @escaping () -> Bool = { Permissions.isAccessibilityGranted },
+         makeTap: @escaping (CGEventTapCallBack, UnsafeMutableRawPointer) -> (any SwipeEventTap)? = SystemSwipeEventTap.make) {
         self.engine = engine
         self.isExposeActive = isExposeActive
+        self.accessibilityGranted = accessibilityGranted
+        self.makeTap = makeTap
+    }
+
+    deinit {
+        recoveryTimer?.invalidate()
+        eventTap?.invalidate()
     }
 
     // MARK: - Lifecycle
 
-    /// Create the tap and add it to the main run loop. No-op if already running.
+    /// Keep trying until the tap exists, including when permission is granted
+    /// after launch. The timer only checks trust/tap health; it reads no input.
     func start() {
-        guard eventTap == nil else {
-            enable()
+        wantsRunning = true
+        if recoveryTimer == nil {
+            let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+                self?.recoverIfNeeded()
+            }
+            recoveryTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        }
+        recoverIfNeeded()
+    }
+
+    /// Reconcile permission and tap health without creating duplicate taps.
+    func recoverIfNeeded() {
+        guard wantsRunning else { return }
+        guard accessibilityGranted() else {
+            eventTap?.invalidate()
+            eventTap = nil
+            resetGesture()
             return
         }
-
-        // Gesture (1<<29) | dock-control (1<<30) only, sourced from C so the raw
-        // private type bits are single-sourced with the synthesizer. Key events
-        // are intentionally excluded (they were never acted on and only added
-        // per-keystroke latency) — see the determination comment in CStrafe.c.
-        let mask = CGEventMask(strafe_tap_event_mask())
+        if let eventTap {
+            if !eventTap.isEnabled {
+                resetGesture()
+                eventTap.enable()
+                // A revoked/invalid tap may no longer be re-enableable.
+                if !eventTap.isEnabled {
+                    eventTap.invalidate()
+                    self.eventTap = nil
+                }
+            }
+            if self.eventTap != nil { return }
+        }
 
         // Trampoline `self` through the tap's userInfo pointer.
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,          // SPEC §2.1: same location as posting
-            place: .headInsertEventTap,       // head of the chain: see events before WindowServer
-            options: .defaultTap,             // active tap: returning nil suppresses
-            eventsOfInterest: mask,
-            callback: { _, type, event, refcon in
+        guard let tap = makeTap(
+            { _, type, event, refcon in
                 guard let refcon else { return Unmanaged.passUnretained(event) }
                 let interceptor = Unmanaged<SwipeInterceptor>
                     .fromOpaque(refcon).takeUnretainedValue()
                 return interceptor.handle(type: type, event: event)
             },
-            userInfo: userInfo
+            userInfo
         ) else {
-            FileHandle.standardError.write(
-                Data("[SwipeInterceptor] failed to create event tap (accessibility not granted?)\n".utf8)
-            )
+            if !reportedCreationFailure {
+                FileHandle.standardError.write(Data(
+                    "[SwipeInterceptor] gesture tap unavailable; retrying automatically\n".utf8))
+                reportedCreationFailure = true
+            }
             return
         }
-
-        // SPEC §2.1: source added to the MAIN run loop in common modes.
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-
         self.eventTap = tap
-        self.runLoopSource = source
-        enable()
+        reportedCreationFailure = false
+        tap.enable()
     }
 
-    /// Enable the tap if it exists.
+    /// Enable the tap, creating it or retrying if permission is pending.
     func enable() {
-        guard let eventTap else { return }
-        CGEvent.tapEnable(tap: eventTap, enable: true)
-        isRunning = true
+        start()
     }
 
     /// Disable the tap without tearing it down (can be re-enabled cheaply).
     func disable() {
-        guard let eventTap else { return }
-        CGEvent.tapEnable(tap: eventTap, enable: false)
-        isRunning = false
+        wantsRunning = false
+        recoveryTimer?.invalidate()
+        recoveryTimer = nil
+        eventTap?.disable()
+        resetGesture()
     }
 
     /// Fully remove the tap from the main run loop and release it.
     func teardown() {
-        if let runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        }
-        if let eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
-        }
-        runLoopSource = nil
+        disable()
+        eventTap?.invalidate()
         eventTap = nil
-        isRunning = false
+    }
+
+    private func resetGesture() {
         swipeTracking = false
         swipeFired = false
         swipePosted = false
@@ -130,10 +163,8 @@ final class SwipeInterceptor: @unchecked Sendable {
             // A disable can swallow a gesture's `ended`/`cancelled`, leaving the
             // state machine mid-track. Reset before re-enabling so a dropped
             // gesture-end can't leave us stuck suppressing companion events.
-            swipeTracking = false
-            swipeFired = false
-            swipePosted = false
-            if let eventTap { CGEvent.tapEnable(tap: eventTap, enable: true) }
+            resetGesture()
+            if wantsRunning { eventTap?.enable() }
             return passthrough
         }
 
@@ -250,5 +281,51 @@ final class SwipeInterceptor: @unchecked Sendable {
         } catch {
             FileHandle.standardError.write(Data("[SwipeInterceptor] switch failed: \(error)\n".utf8))
         }
+    }
+}
+
+/// The narrow lifecycle seam lets permission recovery be tested without
+/// installing a system event tap or requesting test-runner Accessibility.
+protocol SwipeEventTap: AnyObject {
+    var isEnabled: Bool { get }
+    func enable()
+    func disable()
+    func invalidate()
+}
+
+private final class SystemSwipeEventTap: SwipeEventTap {
+    private let port: CFMachPort
+    private let source: CFRunLoopSource
+
+    var isEnabled: Bool {
+        CFMachPortIsValid(port) && CGEvent.tapIsEnabled(tap: port)
+    }
+
+    static func make(callback: CGEventTapCallBack, userInfo: UnsafeMutableRawPointer) -> (any SwipeEventTap)? {
+        // Gesture (29) and dock-control (30) only. Never keyboard events.
+        guard let port = CGEvent.tapCreate(
+            tap: .cgSessionEventTap, place: .headInsertEventTap,
+            options: .defaultTap, eventsOfInterest: CGEventMask(strafe_tap_event_mask()),
+            callback: callback, userInfo: userInfo
+        ) else { return nil }
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0) else {
+            CFMachPortInvalidate(port)
+            return nil
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        return SystemSwipeEventTap(port: port, source: source)
+    }
+
+    private init(port: CFMachPort, source: CFRunLoopSource) {
+        self.port = port
+        self.source = source
+    }
+
+    func enable() { CGEvent.tapEnable(tap: port, enable: true) }
+    func disable() { CGEvent.tapEnable(tap: port, enable: false) }
+    func invalidate() {
+        disable()
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        CFMachPortInvalidate(port)
     }
 }

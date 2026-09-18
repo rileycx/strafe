@@ -23,6 +23,10 @@ final class HotkeyManager {
     private var leftHotKey: EventHotKeyRef?
     private var rightHotKey: EventHotKeyRef?
     private var settingsObserver: (any NSObjectProtocol)?
+    private var registeredShortcuts: [ShortcutAction: KeyboardShortcut] = [:]
+    private(set) var registrationError: String?
+    private var isRecording = false
+    var onStateChanged: (() -> Void)?
 
     nonisolated private static let settingsChanged = Notification.Name(
         "com.rileycx.strafe.hotkeysChanged"
@@ -64,15 +68,26 @@ final class HotkeyManager {
 
     /// Install the Carbon event handler and register both hotkeys.
     func register() {
-        installHandlerIfNeeded()
-
-        let ctrlOpt = UInt32(controlKey | optionKey)
-        if leftHotKey == nil {
-            leftHotKey = registerHotKey(keyCode: UInt32(kVK_LeftArrow), id: Self.leftID, modifiers: ctrlOpt)
+        let desired = Dictionary(uniqueKeysWithValues: ShortcutAction.allCases.compactMap { action in
+            action.storedShortcut.map { (action, $0) }
+        })
+        if desired == registeredShortcuts, registrationError == nil { return }
+        unregister()
+        registrationError = nil
+        if let left = desired[.left], left == desired[.right] {
+            registrationError = "Previous Space and Next Space must use different shortcuts."
+            return
         }
-        if rightHotKey == nil {
-            rightHotKey = registerHotKey(keyCode: UInt32(kVK_RightArrow), id: Self.rightID, modifiers: ctrlOpt)
+        guard !desired.isEmpty else { return }
+        guard installHandlerIfNeeded() else { return }
+        if let shortcut = desired[.left] {
+            leftHotKey = registerHotKey(shortcut: shortcut, action: .left, id: Self.leftID)
         }
+        if registrationError == nil, let shortcut = desired[.right] {
+            rightHotKey = registerHotKey(shortcut: shortcut, action: .right, id: Self.rightID)
+        }
+        if registrationError != nil { unregister() }
+        else { registeredShortcuts = desired }
     }
 
     /// Unregister hotkeys and remove the handler.
@@ -81,6 +96,7 @@ final class HotkeyManager {
         if let rightHotKey { UnregisterEventHotKey(rightHotKey) }
         leftHotKey = nil
         rightHotKey = nil
+        registeredShortcuts = [:]
         if let eventHandler {
             RemoveEventHandler(eventHandler)
             self.eventHandler = nil
@@ -93,11 +109,55 @@ final class HotkeyManager {
     func applyStoredState() {
         // Refresh the cache after another process changes the shared preference.
         Preferences.store.synchronize()
-        if HotkeyManager.enabled {
+        if HotkeyManager.enabled && !isRecording {
             register()
         } else {
             unregister()
+            registrationError = nil
         }
+        onStateChanged?()
+    }
+
+    /// Suspend our Carbon registrations so the local recorder can see even an
+    /// existing strafe shortcut. No event tap or global keyboard monitor is used.
+    func setRecording(_ recording: Bool) {
+        isRecording = recording
+        applyStoredState()
+    }
+
+    /// Changes are transactional: a chord owned by another app is rejected and
+    /// the previous setting/registrations are restored before returning.
+    func updateShortcut(_ shortcut: KeyboardShortcut?, for action: ShortcutAction) -> String? {
+        if let error = shortcut?.validationError { return error }
+        let other: ShortcutAction = action == .left ? .right : .left
+        if let shortcut, shortcut == other.storedShortcut {
+            return "That shortcut is already assigned to \(other.title)."
+        }
+        let previous = action.storedShortcut
+        action.persist(shortcut)
+        isRecording = false
+        applyStoredState()
+        if let error = registrationError {
+            action.persist(previous)
+            applyStoredState()
+            return error
+        }
+        Self.notifySettingsChanged()
+        return nil
+    }
+
+    func restoreDefaultShortcuts() -> String? {
+        let previous = ShortcutAction.allCases.map { ($0, $0.storedShortcut) }
+        for action in ShortcutAction.allCases { action.persist(action.defaultShortcut) }
+        isRecording = false
+        applyStoredState()
+        if let error = registrationError {
+            for (action, shortcut) in previous { action.persist(shortcut) }
+            applyStoredState()
+            return error
+        }
+        Self.notifySettingsChanged()
+        return nil
     }
 
     // MARK: - Persistence
@@ -119,6 +179,10 @@ final class HotkeyManager {
 
     nonisolated static func persist(enabled: Bool) {
         Preferences.store.set(enabled, forKey: enabledStorageKey)
+        notifySettingsChanged()
+    }
+
+    nonisolated private static func notifySettingsChanged() {
         // Flush before notifying so a resident app cannot read the previous value.
         Preferences.store.synchronize()
         DistributedNotificationCenter.default().postNotificationName(
@@ -128,8 +192,8 @@ final class HotkeyManager {
 
     // MARK: - Internals
 
-    private func installHandlerIfNeeded() {
-        guard eventHandler == nil else { return }
+    private func installHandlerIfNeeded() -> Bool {
+        guard eventHandler == nil else { return true }
 
         var spec = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -138,7 +202,7 @@ final class HotkeyManager {
 
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
-        InstallEventHandler(
+        let status = InstallEventHandler(
             GetApplicationEventTarget(),
             { _, event, userInfo -> OSStatus in
                 guard let userInfo, let event else { return OSStatus(eventNotHandledErr) }
@@ -167,20 +231,25 @@ final class HotkeyManager {
             userInfo,
             &eventHandler
         )
+        if status != noErr {
+            registrationError = "Could not install the shortcut handler (macOS error \(status))."
+        }
+        return status == noErr
     }
 
-    private func registerHotKey(keyCode: UInt32, id: UInt32, modifiers: UInt32) -> EventHotKeyRef? {
+    private func registerHotKey(shortcut: KeyboardShortcut, action: ShortcutAction, id: UInt32) -> EventHotKeyRef? {
         let hotKeyID = EventHotKeyID(signature: Self.signature, id: id)
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(
-            keyCode,
-            modifiers,
+            shortcut.keyCode,
+            shortcut.modifiers,
             hotKeyID,
             GetApplicationEventTarget(),
             0,
             &ref
         )
         guard status == noErr else {
+            registrationError = "\(action.title): \(shortcut.displayName) could not be registered (macOS error \(status)). It may be in use by another app or macOS. Choose another shortcut or release it there."
             FileHandle.standardError.write(
                 Data("[HotkeyManager] RegisterEventHotKey failed (status \(status)) for id \(id)\n".utf8)
             )

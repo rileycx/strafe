@@ -7,7 +7,7 @@ clang -target "$(uname -m)-apple-macosx15.0" -Wall -Wextra -Werror \
   -c Tests/HotkeyRegistrationStub.c -o "$test_dir/registration.o"
 swiftc -swift-version 6 -target "$(uname -m)-apple-macosx15.0" \
   -strict-concurrency=complete -warnings-as-errors \
-  Sources/strafe/HotkeyManager.swift Tests/HotkeyManagerTests.swift \
+  Sources/strafe/KeyboardShortcut.swift Sources/strafe/HotkeyManager.swift Tests/HotkeyManagerTests.swift \
   "$test_dir/registration.o" -o "$test_dir/hotkeys"
 python3 - "$test_dir/hotkeys" <<'PY'
 import select

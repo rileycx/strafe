@@ -9,6 +9,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let interceptor: SwipeInterceptor
     private let engine: GestureSwitchEngine?
     private let hotkeys: HotkeyManager?
+    private var settings: SettingsWindowController?
 
     private let toggleItem = NSMenuItem(
         title: "Enable", action: #selector(toggleEnabled), keyEquivalent: ""
@@ -18,7 +19,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     )
     private var speedItems: [NSMenuItem] = []
     private let hotkeysItem = NSMenuItem(
-        title: "Space-switch hotkeys (⌃⌥←/→)", action: #selector(toggleHotkeys), keyEquivalent: ""
+        title: "Space-switch hotkeys", action: #selector(toggleHotkeys), keyEquivalent: ""
     )
     private let accessibilityItem = NSMenuItem(
         title: "Accessibility granted: —", action: nil, keyEquivalent: ""
@@ -38,6 +39,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.hotkeys = hotkeys
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
+        if let hotkeys {
+            settings = SettingsWindowController(hotkeys: hotkeys, engine: engine, interceptor: interceptor)
+        }
 
         // AppKit restores the previous visibility; every new launch starts visible.
         statusItem.isVisible = true
@@ -65,6 +69,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(hotkeysItem)
         }
         menu.addItem(accessibilityItem)
+        if settings != nil {
+            menu.addItem(.separator())
+            let item = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+            item.target = self
+            menu.addItem(item)
+        }
 
         // Update story, stated rather than performed. strafe cannot reach the
         // internet, so it cannot check for a new version; instead of a
@@ -98,6 +108,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     // Show the icon again. Called when the app is reopened while it is already running.
     func show() {
         statusItem.isVisible = true
+    }
+
+    @objc func showSettings() {
+        settings?.showSettings()
     }
 
     /// The "Transition speed" submenu: one checkable item per preset.
@@ -193,8 +207,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             speedItem.title = "Transition speed: \(current.title)"
             for item in speedItems { item.state = item.tag == current.rawValue ? .on : .off }
         }
-        let granted = Permissions.isAccessibilityGranted
-        accessibilityItem.title = "Accessibility granted: \(granted ? "yes" : "no")"
+        accessibilityItem.title = interceptor.statusDescription
         hotkeysItem.state = HotkeyManager.enabled ? .on : .off
     }
 }

@@ -47,17 +47,25 @@ do so. The tap's event mask is defined in exactly one place, and it covers
   removed. The tap now wakes only on real space-swipe gestures.
 
 - **The tap is installed here:** `Sources/strafe/SwipeInterceptor.swift`,
-  `SwipeInterceptor.start()` (line 39; the `tapCreate` call itself is at
-  line 54), using
+  `SystemSwipeEventTap.make`, called by `SwipeInterceptor.recoverIfNeeded`, using
   `CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
   options: .defaultTap, eventsOfInterest: mask, ...)` where `mask` comes
   straight from `strafe_tap_event_mask()` above.
 
-**Because keystrokes are not in the mask, strafe cannot observe what you type.**
+  A once-per-second timer checks Accessibility trust and the existing tap's
+  validity and enabled state. It retries failed creation, recovers disabled
+  taps, and releases invalid taps before replacing them. The timer reads no
+  input events and never widens the mask. Disabling or tearing down the
+  interceptor stops the timer.
+
+**The system-wide gesture tap cannot observe what you type.**
 A key event fails the `cgsType == dockControl || cgsType == gesture` guard
 (`SwipeInterceptor.handle`, line 144) and is passed straight through, but in
 practice a key event is never even delivered to the callback because it is not
-in the tap's mask.
+in the tap's mask. The settings shortcut recorder receives key events only
+while recording in strafe's own focused window. It saves the chosen key code
+and modifier flags, not a history of input, and installs no global keyboard
+monitor or additional event tap.
 
 ### Exactly what event data strafe touches
 
@@ -149,25 +157,21 @@ Each of these is verifiable with a single grep over `Sources/`.
   art, it does **not** shell out to `tccutil` or anything else
   (`grep -rniE 'Process\(\)|/usr/bin|/bin/|tccutil' Sources/` — no spawns).
 
-- **Persistence is limited to menu settings.** strafe stores no databases and no
-  caches. Its own code writes two `UserDefaults` values: `transitionSpeed`, an integer
-  0–2 recording which **Transition speed** preset you picked in the menu
-  (`TransitionSpeed`, `Sources/strafe/TransitionSpeed.swift` line 101); and
-  `spaceHotkeysEnabled`, a bool recording whether the Ctrl+Option+Left/Right
-  **Space-switch hotkeys** toggle is on (`HotkeyManager`,
-  `Sources/strafe/HotkeyManager.swift`). Neither has any effect on what the
-  gesture tap sees — the first changes the shape of the gesture strafe
-  *posts*, the second only registers/unregisters a Carbon global hotkey (a
-  separate mechanism from the tap, added so the hotkeys can be turned off
-  independently if they conflict with a third-party shortcut bound to the
-  same chord).
+- **Persistence is limited to settings.** strafe stores no databases and no
+  caches. Its `UserDefaults` values include `transitionSpeed` (the selected
+  transition preset), `spaceHotkeysEnabled` (the keyboard-shortcut toggle), and
+  `spaceShortcut.left` / `spaceShortcut.right` (a key code and modifier flags,
+  or a cleared shortcut). See `TransitionSpeed.swift`, `HotkeyManager.swift`,
+  and `KeyboardShortcut.swift`. These never widen the gesture tap's mask.
+  Keyboard shortcuts use Carbon `RegisterEventHotKey`, a separate mechanism
+  that delivers only registered shortcut activations.
 
   Reads and writes go through one accessor, so the two launch modes
   (`strafe.app` and the bare CLI, which has no bundle id) cannot land in
   different plists:
 
   ```
-  grep -rn 'Preferences.store' Sources/   # two keys, plus cache synchronization
+  grep -rn 'Preferences.store' Sources/   # settings and cache synchronization
   grep -rn 'UserDefaults(' Sources/       # one hit: the suite in Preferences.swift
   ```
 
@@ -181,6 +185,9 @@ Each of these is verifiable with a single grep over `Sources/`.
   updates only its existing Carbon shortcut registrations; it does not accept
   commands or settings from notification data. This adds no network access or
   permissions.
+
+  `strafe settings` sends a separate payload-free local notification to open
+  the resident app's settings window. It cannot change settings or permissions.
 
   No usage data, no history, no coordinates are stored.
   Deleting `strafe.app` leaves behind only that plist, which
