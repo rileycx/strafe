@@ -193,8 +193,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             speedItem.title = "Transition speed: \(current.title)"
             for item in speedItems { item.state = item.tag == current.rawValue ? .on : .off }
         }
-        let granted = Permissions.isAccessibilityGranted
-        accessibilityItem.title = "Accessibility granted: \(granted ? "yes" : "no")"
+        accessibilityItem.title = interceptor.statusDescription
         hotkeysItem.state = HotkeyManager.enabled ? .on : .off
     }
 }

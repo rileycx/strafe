@@ -55,9 +55,9 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
         }
 
     case "status":
-        // No live tap in CLI mode, so report tap as not running. CGS symbol
+        // This CLI process cannot report the resident app's event tap. CGS symbol
         // resolution is the capability check per SPEC §1.1 / §6.
-        Permissions.printStatus(tapRunning: false, cgsAvailable: engine.cgsAvailable)
+        Permissions.printStatus(cgsAvailable: engine.cgsAvailable)
         return 0
 
     case "speed":

@@ -47,11 +47,16 @@ do so. The tap's event mask is defined in exactly one place, and it covers
   removed. The tap now wakes only on real space-swipe gestures.
 
 - **The tap is installed here:** `Sources/strafe/SwipeInterceptor.swift`,
-  `SwipeInterceptor.start()` (line 39; the `tapCreate` call itself is at
-  line 54), using
+  `SystemSwipeEventTap.make`, called by `SwipeInterceptor.recoverIfNeeded`, using
   `CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
   options: .defaultTap, eventsOfInterest: mask, ...)` where `mask` comes
   straight from `strafe_tap_event_mask()` above.
+
+  A once-per-second timer checks Accessibility trust and the existing tap's
+  validity and enabled state. It retries failed creation, recovers disabled
+  taps, and releases invalid taps before replacing them. The timer reads no
+  input events and never widens the mask. Disabling or tearing down the
+  interceptor stops the timer.
 
 **Because keystrokes are not in the mask, strafe cannot observe what you type.**
 A key event fails the `cgsType == dockControl || cgsType == gesture` guard

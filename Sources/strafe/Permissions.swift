@@ -22,16 +22,15 @@ enum Permissions {
     }
 
     /// Print a human-readable status readout for `strafe status`.
-    /// `tapRunning` is supplied by the caller since tap state lives on the
-    /// interceptor instance. `cgsAvailable` reports whether the private CGS
-    /// topology symbols resolved (SPEC §1.1 capability check).
-    static func printStatus(tapRunning: Bool, cgsAvailable: Bool) {
+    /// The CLI process has no tap, so it must not report its own state as if it
+    /// described the separately running menu-bar app. `cgsAvailable` reports
+    /// whether the private CGS topology symbols resolved.
+    static func printStatus(cgsAvailable: Bool) {
         let ax = isAccessibilityGranted ? "yes" : "no"
-        let tap = tapRunning ? "yes" : "no"
         let cgs = cgsAvailable ? "yes" : "no"
         print("strafe status")
         print("  Accessibility granted: \(ax)")
-        print("  Event tap running:     \(tap)")
+        print("  Event tap:             see menu (CLI creates no tap)")
         print("  CGS symbols resolved:  \(cgs)")
         print("  Transition speed:      \(TransitionSpeed.stored.title)")
     }
