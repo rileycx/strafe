@@ -230,6 +230,11 @@ the current source. macOS 27 requires an embedded IOHID payload on synthetic
 gestures and reverses their direction encoding. This build handles both at
 runtime, retaining the existing gesture format on earlier macOS versions.
 
+On macOS 27, a fullscreen Dock window can remain present even when Mission
+Control is closed. strafe checks Dock Accessibility overlay identifiers in the
+background so this window does not cause normal swipes to bypass interception.
+Actual Mission Control and App Exposé swipes still pass through to macOS.
+
 After replacing an ad-hoc signed build, remove the stale strafe entry in
 **System Settings › Privacy & Security › Accessibility**, add the updated
 `/Applications/strafe.app`, enable it, and relaunch strafe.

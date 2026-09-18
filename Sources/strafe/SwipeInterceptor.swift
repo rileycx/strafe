@@ -16,6 +16,7 @@ import CStrafe
 final class SwipeInterceptor: @unchecked Sendable {
     private let engine: SwitchEngine
     private let isExposeActive: () -> Bool
+    private let overlayMonitor: DockOverlayMonitor?
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
@@ -31,15 +32,25 @@ final class SwipeInterceptor: @unchecked Sendable {
     private var swipeFired = false
     private var swipePosted = false
 
-    init(engine: SwitchEngine, isExposeActive: @escaping () -> Bool = { strafe_is_expose_active() }) {
+    init(engine: SwitchEngine, isExposeActive: (() -> Bool)? = nil) {
         self.engine = engine
-        self.isExposeActive = isExposeActive
+        if let isExposeActive {
+            self.isExposeActive = isExposeActive
+            self.overlayMonitor = nil
+        } else {
+            let monitor = DockOverlayMonitor()
+            self.overlayMonitor = monitor
+            self.isExposeActive = { monitor.isActive }
+        }
     }
+
+    deinit { overlayMonitor?.stop() }
 
     // MARK: - Lifecycle
 
     /// Create the tap and add it to the main run loop. No-op if already running.
     func start() {
+        overlayMonitor?.start()
         guard eventTap == nil else {
             enable()
             return
@@ -84,6 +95,7 @@ final class SwipeInterceptor: @unchecked Sendable {
 
     /// Enable the tap if it exists.
     func enable() {
+        overlayMonitor?.start()
         guard let eventTap else { return }
         CGEvent.tapEnable(tap: eventTap, enable: true)
         isRunning = true
@@ -91,6 +103,7 @@ final class SwipeInterceptor: @unchecked Sendable {
 
     /// Disable the tap without tearing it down (can be re-enabled cheaply).
     func disable() {
+        overlayMonitor?.stop()
         guard let eventTap else { return }
         CGEvent.tapEnable(tap: eventTap, enable: false)
         isRunning = false
@@ -98,6 +111,7 @@ final class SwipeInterceptor: @unchecked Sendable {
 
     /// Fully remove the tap from the main run loop and release it.
     func teardown() {
+        overlayMonitor?.stop()
         if let runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         }
