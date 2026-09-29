@@ -26,7 +26,7 @@ try:
         actual = listener.stdout.readline().strip()
         assert actual == line, (line, actual)
     expect('ACTIVE 2')
-    for value, expected in [('off', 0), ('on', 2), ('off', 0), ('on', 2)]:
+    for value, expected in [('control-on', 4), ('off', 0), ('on', 4), ('control-off', 2), ('off', 0), ('on', 2)]:
         subprocess.run([binary, domain, value], check=True)
         expect('ACTIVE ' + str(expected))
     print('PASS: separate processes apply on/off changes without restarting')

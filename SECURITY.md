@@ -150,14 +150,16 @@ Each of these is verifiable with a single grep over `Sources/`.
   (`grep -rniE 'Process\(\)|/usr/bin|/bin/|tccutil' Sources/` — no spawns).
 
 - **Persistence is limited to menu settings.** strafe stores no databases and no
-  caches. Its own code writes two `UserDefaults` values: `transitionSpeed`, an integer
+  caches. Its own code writes three `UserDefaults` values: `transitionSpeed`, an integer
   0–2 recording which **Transition speed** preset you picked in the menu
-  (`TransitionSpeed`, `Sources/strafe/TransitionSpeed.swift` line 101); and
-  `spaceHotkeysEnabled`, a bool recording whether the Ctrl+Option+Left/Right
-  **Space-switch hotkeys** toggle is on (`HotkeyManager`,
-  `Sources/strafe/HotkeyManager.swift`). Neither has any effect on what the
+  (`TransitionSpeed`, `Sources/strafe/TransitionSpeed.swift` line 101);
+  `spaceHotkeysEnabled`, a bool recording whether all
+  **Space-switch hotkeys** are on; and `controlArrowHotkeysEnabled`, a bool
+  defaulting to false that adds Control+Left/Right alongside
+  Control+Option+Left/Right (`HotkeyManager`,
+  `Sources/strafe/HotkeyManager.swift`). None affects what the
   gesture tap sees — the first changes the shape of the gesture strafe
-  *posts*, the second only registers/unregisters a Carbon global hotkey (a
+  *posts*, the two hotkey settings only register/unregister Carbon global hotkeys (a
   separate mechanism from the tap, added so the hotkeys can be turned off
   independently if they conflict with a third-party shortcut bound to the
   same chord).
@@ -167,7 +169,7 @@ Each of these is verifiable with a single grep over `Sources/`.
   different plists:
 
   ```
-  grep -rn 'Preferences.store' Sources/   # two keys, plus cache synchronization
+  grep -rn 'Preferences.store' Sources/   # three keys, plus cache synchronization
   grep -rn 'UserDefaults(' Sources/       # one hit: the suite in Preferences.swift
   ```
 
@@ -181,6 +183,13 @@ Each of these is verifiable with a single grep over `Sources/`.
   updates only its existing Carbon shortcut registrations; it does not accept
   commands or settings from notification data. This adds no network access or
   permissions.
+
+  The optional Control-arrow pair uses the same Carbon mechanism, with distinct
+  IDs for each direction. It does not receive unrelated keystrokes or widen the
+  gesture tap mask. strafe neither reads nor writes native symbolic-hotkey
+  preferences. Users must disable the two conflicting macOS Space shortcuts
+  themselves, and re-enable them to restore native behavior after quitting or
+  uninstalling strafe. Deleting strafe's plist does not restore macOS settings.
 
   No usage data, no history, no coordinates are stored.
   Deleting `strafe.app` leaves behind only that plist, which
@@ -224,7 +233,7 @@ grep -rniE 'Process\(\)|tccutil|/usr/bin|/bin/' Sources/
 # 4. Confirm the tap mask excludes keystrokes, and that there is only one mask.
 grep -rn 'strafe_tap_event_mask' Sources/
 
-# 5. Confirm the one stored setting.
+# 5. Confirm the stored settings.
 grep -rn 'Preferences.store' Sources/
 ```
 

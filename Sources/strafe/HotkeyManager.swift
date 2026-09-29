@@ -10,7 +10,7 @@ import Foundation
 ///
 /// **Toggleable.** Ctrl+Option+Left/Right is also a common chord for
 /// third-party window-tiling tools (and macOS's own tiling shortcuts), and
-/// Carbon's `RegisterEventHotKey` grabs it system-wide ahead of them. Since
+/// Carbon registrations can conflict with other owners of the same shortcut. Since
 /// this is a separate mechanism from the gesture tap (SPEC §2), it can be
 /// switched off independently via `HotkeyManager.enabled` / the menu-bar
 /// "Space-switch hotkeys" item / `strafe hotkeys off` — leaving the swipe
@@ -22,6 +22,12 @@ final class HotkeyManager {
     private var eventHandler: EventHandlerRef?
     private var leftHotKey: EventHotKeyRef?
     private var rightHotKey: EventHotKeyRef?
+    private var controlLeftHotKey: EventHotKeyRef?
+    private var controlRightHotKey: EventHotKeyRef?
+
+    /// Registration is not proof of delivery: native Space shortcuts must be disabled.
+    var controlArrowsRegistered: Bool { controlLeftHotKey != nil && controlRightHotKey != nil }
+
     private var settingsObserver: (any NSObjectProtocol)?
 
     nonisolated private static let settingsChanged = Notification.Name(
@@ -36,6 +42,8 @@ final class HotkeyManager {
     }()
     private static let leftID: UInt32 = 1
     private static let rightID: UInt32 = 2
+    private static let controlLeftID: UInt32 = 3
+    private static let controlRightID: UInt32 = 4
 
     init(engine: SwitchEngine) {
         self.engine = engine
@@ -65,6 +73,7 @@ final class HotkeyManager {
     /// Install the Carbon event handler and register both hotkeys.
     func register() {
         installHandlerIfNeeded()
+        guard eventHandler != nil else { return }
 
         let ctrlOpt = UInt32(controlKey | optionKey)
         if leftHotKey == nil {
@@ -75,8 +84,27 @@ final class HotkeyManager {
         }
     }
 
+    private func registerControlArrows() {
+        guard !controlArrowsRegistered else { return }
+        controlLeftHotKey = registerHotKey(
+            keyCode: UInt32(kVK_LeftArrow), id: Self.controlLeftID, modifiers: UInt32(controlKey))
+        controlRightHotKey = registerHotKey(
+            keyCode: UInt32(kVK_RightArrow), id: Self.controlRightID, modifiers: UInt32(controlKey))
+        // A failed pair must not leave only one direction captured. Applying the
+        // setting again retries, while the original Ctrl+Option pair stays intact.
+        if !controlArrowsRegistered { unregisterControlArrows() }
+    }
+
+    private func unregisterControlArrows() {
+        if let controlLeftHotKey { UnregisterEventHotKey(controlLeftHotKey) }
+        if let controlRightHotKey { UnregisterEventHotKey(controlRightHotKey) }
+        controlLeftHotKey = nil
+        controlRightHotKey = nil
+    }
+
     /// Unregister hotkeys and remove the handler.
     func unregister() {
+        unregisterControlArrows()
         if let leftHotKey { UnregisterEventHotKey(leftHotKey) }
         if let rightHotKey { UnregisterEventHotKey(rightHotKey) }
         leftHotKey = nil
@@ -95,6 +123,11 @@ final class HotkeyManager {
         Preferences.store.synchronize()
         if HotkeyManager.enabled {
             register()
+            if Self.controlArrowsEnabled && eventHandler != nil {
+                registerControlArrows()
+            } else {
+                unregisterControlArrows()
+            }
         } else {
             unregister()
         }
@@ -117,8 +150,38 @@ final class HotkeyManager {
         Preferences.store.object(forKey: enabledStorageKey) as? Bool ?? true
     }
 
+    nonisolated static let controlArrowsStorageKey = "controlArrowHotkeysEnabled"
+
+    /// Opt-in: native macOS Space shortcuts otherwise own these combinations.
+    nonisolated static var controlArrowsEnabled: Bool {
+        Preferences.store.bool(forKey: controlArrowsStorageKey)
+    }
+
+    nonisolated static let controlArrowSetup = """
+        In System Settings > Keyboard > Keyboard Shortcuts > Mission Control, \
+        turn off “Move left a space” and “Move right a space”. strafe does not \
+        change these macOS settings for you.
+
+        Control-arrow switching requires strafe to be running, Accessibility \
+        permission, and Space-switch hotkeys to be enabled. Control+Option+arrows \
+        remain available too.
+
+        If you quit, disable, or uninstall strafe, turn those two macOS shortcuts \
+        back on to restore native Control-arrow switching. Removing strafe’s \
+        preferences does not restore macOS shortcuts.
+        """
+
+    nonisolated static func persist(controlArrowsEnabled: Bool) {
+        Preferences.store.set(controlArrowsEnabled, forKey: controlArrowsStorageKey)
+        notifySettingsChanged()
+    }
+
     nonisolated static func persist(enabled: Bool) {
         Preferences.store.set(enabled, forKey: enabledStorageKey)
+        notifySettingsChanged()
+    }
+
+    nonisolated private static func notifySettingsChanged() {
         // Flush before notifying so a resident app cannot read the previous value.
         Preferences.store.synchronize()
         DistributedNotificationCenter.default().postNotificationName(
@@ -138,7 +201,7 @@ final class HotkeyManager {
 
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
-        InstallEventHandler(
+        let status = InstallEventHandler(
             GetApplicationEventTarget(),
             { _, event, userInfo -> OSStatus in
                 guard let userInfo, let event else { return OSStatus(eventNotHandledErr) }
@@ -155,6 +218,7 @@ final class HotkeyManager {
                     &hotKeyID
                 )
                 guard status == noErr else { return status }
+                guard hotKeyID.signature == HotkeyManager.signature else { return OSStatus(eventNotHandledErr) }
 
                 // Carbon calls back on the main thread; hop to the main actor.
                 MainActor.assumeIsolated {
@@ -167,6 +231,11 @@ final class HotkeyManager {
             userInfo,
             &eventHandler
         )
+        if status != noErr {
+            eventHandler = nil
+            FileHandle.standardError.write(
+                Data("[HotkeyManager] InstallEventHandler failed (status \(status))\n".utf8))
+        }
     }
 
     private func registerHotKey(keyCode: UInt32, id: UInt32, modifiers: UInt32) -> EventHotKeyRef? {
@@ -192,8 +261,8 @@ final class HotkeyManager {
     private func handle(id: UInt32) {
         let direction: SwitchDirection
         switch id {
-        case Self.leftID: direction = .left
-        case Self.rightID: direction = .right
+        case Self.leftID, Self.controlLeftID: direction = .left
+        case Self.rightID, Self.controlRightID: direction = .right
         default: return
         }
         do {

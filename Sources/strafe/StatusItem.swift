@@ -20,6 +20,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let hotkeysItem = NSMenuItem(
         title: "Space-switch hotkeys (⌃⌥←/→)", action: #selector(toggleHotkeys), keyEquivalent: ""
     )
+    private let controlArrowsItem = NSMenuItem(
+        title: "Also use Control + arrows…", action: #selector(toggleControlArrows), keyEquivalent: ""
+    )
+    private let controlArrowsStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let accessibilityItem = NSMenuItem(
         title: "Accessibility granted: —", action: nil, keyEquivalent: ""
     )
@@ -63,6 +67,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         if hotkeys != nil {
             hotkeysItem.target = self
             menu.addItem(hotkeysItem)
+            controlArrowsItem.target = self
+            controlArrowsItem.toolTip = HotkeyManager.controlArrowSetup
+            menu.addItem(controlArrowsItem)
+            controlArrowsStatusItem.isEnabled = false
+            menu.addItem(controlArrowsStatusItem)
         }
         menu.addItem(accessibilityItem)
 
@@ -160,6 +169,21 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refresh()
     }
 
+    @objc private func toggleControlArrows() {
+        guard let hotkeys else { return }
+        let newValue = !HotkeyManager.controlArrowsEnabled
+        let alert = NSAlert()
+        alert.messageText = newValue ? "Enable Control + arrows?" : "Disable Control + arrows?"
+        alert.informativeText = HotkeyManager.controlArrowSetup
+        alert.addButton(withTitle: newValue ? "Enable" : "Disable")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        HotkeyManager.persist(controlArrowsEnabled: newValue)
+        hotkeys.applyStoredState()
+        refresh()
+    }
+
     // AppKit saves visibility; initialization resets it on the next launch.
     @objc private func hideFromMenuBar() {
         let alert = NSAlert()
@@ -195,6 +219,17 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
         let granted = Permissions.isAccessibilityGranted
         accessibilityItem.title = "Accessibility granted: \(granted ? "yes" : "no")"
+        controlArrowsItem.state = HotkeyManager.controlArrowsEnabled ? .on : .off
+        controlArrowsStatusItem.isHidden = !HotkeyManager.controlArrowsEnabled
+        if !HotkeyManager.enabled {
+            controlArrowsStatusItem.title = "Control + arrows paused: hotkeys are off"
+        } else if hotkeys?.controlArrowsRegistered != true {
+            controlArrowsStatusItem.title = "Control + arrows registration failed; toggle to retry"
+        } else {
+            controlArrowsStatusItem.title = "Control + arrows requires macOS shortcuts off"
+        }
+        hotkeysItem.title = HotkeyManager.controlArrowsEnabled
+            ? "Space-switch hotkeys (⌃⌥←/→ and ⌃←/→)" : "Space-switch hotkeys (⌃⌥←/→)"
         hotkeysItem.state = HotkeyManager.enabled ? .on : .off
     }
 }

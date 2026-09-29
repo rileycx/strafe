@@ -177,9 +177,38 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   strafe switch left|right   # switch once and exit
   strafe status              # print accessibility / tap status
   strafe speed [preset]      # show or set transition speed
-  strafe hotkeys [on|off]    # show or set Space-switch hotkeys
+  strafe hotkeys [on|off]    # show or set all Space-switch hotkeys
+  strafe control-arrows [on|off] # show or set additional Control-arrow pair
   strafe                     # start the menu-bar app
   ```
+
+### Optional Control + arrow shortcuts
+
+The standard macOS `ctrl`+`←` / `ctrl`+`→` shortcuts normally keep Apple's
+animation: strafe's gesture tap does not receive keyboard events.
+To route those combinations through strafe as well:
+
+1. In **System Settings > Keyboard > Keyboard Shortcuts > Mission Control**,
+   turn off **Move left a space** and **Move right a space**.
+2. In strafe's menu, enable **Also use Control + arrows…** (or run
+   `strafe control-arrows on`). Keep **Space-switch hotkeys** enabled.
+3. Press Control + Left/Right to switch with your selected transition speed.
+   Control + Option + Left/Right and trackpad swipes still work.
+
+This option defaults to off. It adds two Carbon hotkey registrations; it does
+not install a keyboard event tap or change macOS preferences. A successful
+registration does not prove that macOS will deliver the shortcut: native
+Space bindings or another app can still own the combination. If switching
+still uses Apple's animation, check the two Mission Control settings above.
+
+**When strafe quits, crashes, or has hotkeys disabled, these Control-arrow
+shortcuts will not switch Spaces while the native bindings are off.** Turn
+**Move left a space** and **Move right a space** back on to restore native
+behavior, including before uninstalling. Deleting strafe's preferences does
+not restore those system settings. Switching also requires Accessibility.
+
+`strafe control-arrows off` removes only the additional pair. `strafe hotkeys
+off` disables both pairs. Both settings update a running app without restarting.
 
 ## Permissions
 
@@ -199,7 +228,8 @@ strafe off (or remove it from the list).
 
 ## Uninstall
 
-1. Quit strafe from its menu-bar menu.
+1. If you disabled macOS **Move left a space** / **Move right a space**, turn
+   them back on in Keyboard Shortcuts > Mission Control. Quit strafe.
 2. Delete `strafe.app`.
 3. Remove its entry from **System Settings › Privacy & Security ›
    Accessibility**.
