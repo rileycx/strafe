@@ -1,44 +1,20 @@
-import Carbon.HIToolbox
 import Foundation
 
-/// Registers global hotkeys via Carbon's `RegisterEventHotKey` and routes them
-/// to the switch engine. Defaults: ctrl+opt+left / ctrl+opt+right.
-///
-/// This is a working implementation (not stubbed). Carbon hotkeys are still the
-/// simplest reliable way to grab a system-wide key combo without a full event
-/// tap, and they do not require Accessibility permission.
-///
-/// **Toggleable.** Ctrl+Option+Left/Right is also a common chord for
-/// third-party window-tiling tools (and macOS's own tiling shortcuts), and
-/// Carbon's `RegisterEventHotKey` grabs it system-wide ahead of them. Since
-/// this is a separate mechanism from the gesture tap (SPEC §2), it can be
-/// switched off independently via `HotkeyManager.enabled` / the menu-bar
-/// "Space-switch hotkeys" item / `strafe hotkeys off` — leaving the swipe
-/// speedup itself untouched.
+/// Owns the optional Control-arrow interceptor and synchronizes its preference.
 @MainActor
 final class HotkeyManager {
-    private let engine: SwitchEngine
+    private let controlArrows: ControlArrowInterceptor
 
-    private var eventHandler: EventHandlerRef?
-    private var leftHotKey: EventHotKeyRef?
-    private var rightHotKey: EventHotKeyRef?
+    var controlArrowsRunning: Bool { controlArrows.isRunning }
+
     private var settingsObserver: (any NSObjectProtocol)?
 
     nonisolated private static let settingsChanged = Notification.Name(
         "com.rileycx.strafe.hotkeysChanged"
     )
 
-    // Distinct ids so the handler knows which combo fired.
-    private static let signature: OSType = {
-        // 'SNAP'
-        let chars: [UInt8] = [0x53, 0x4E, 0x41, 0x50]
-        return chars.reduce(OSType(0)) { ($0 << 8) | OSType($1) }
-    }()
-    private static let leftID: UInt32 = 1
-    private static let rightID: UInt32 = 2
-
     init(engine: SwitchEngine) {
-        self.engine = engine
+        self.controlArrows = ControlArrowInterceptor(engine: engine)
     }
 
     func start() {
@@ -59,66 +35,47 @@ final class HotkeyManager {
             DistributedNotificationCenter.default().removeObserver(settingsObserver)
             self.settingsObserver = nil
         }
-        unregister()
+        controlArrows.stop()
     }
 
-    /// Install the Carbon event handler and register both hotkeys.
-    func register() {
-        installHandlerIfNeeded()
-
-        let ctrlOpt = UInt32(controlKey | optionKey)
-        if leftHotKey == nil {
-            leftHotKey = registerHotKey(keyCode: UInt32(kVK_LeftArrow), id: Self.leftID, modifiers: ctrlOpt)
-        }
-        if rightHotKey == nil {
-            rightHotKey = registerHotKey(keyCode: UInt32(kVK_RightArrow), id: Self.rightID, modifiers: ctrlOpt)
-        }
-    }
-
-    /// Unregister hotkeys and remove the handler.
-    func unregister() {
-        if let leftHotKey { UnregisterEventHotKey(leftHotKey) }
-        if let rightHotKey { UnregisterEventHotKey(rightHotKey) }
-        leftHotKey = nil
-        rightHotKey = nil
-        if let eventHandler {
-            RemoveEventHandler(eventHandler)
-            self.eventHandler = nil
-        }
-    }
-
-    /// Register or unregister to match the persisted setting. Safe to call
-    /// repeatedly (both `register`/`unregister` are no-ops in the direction
-    /// that's already satisfied, aside from a redundant handler install check).
+    /// Apply the shared preference. Native macOS shortcuts are only paused in
+    /// memory, while Control is held.
     func applyStoredState() {
         // Refresh the cache after another process changes the shared preference.
         Preferences.store.synchronize()
-        if HotkeyManager.enabled {
-            register()
-        } else {
-            unregister()
-        }
+        if Self.controlArrowsEnabled { controlArrows.start() } else { controlArrows.stop() }
     }
 
     // MARK: - Persistence
 
-    /// `nonisolated` so the CLI (`strafe hotkeys [on|off]`, no run loop, no
-    /// main actor) can read/write this without hopping actors.
+    nonisolated static let controlArrowsStorageKey = "controlArrowHotkeysEnabled"
 
-    /// The one `UserDefaults` key this setting uses, following the same
-    /// convention as `TransitionSpeed.storageKey`.
-    nonisolated static let enabledStorageKey = "spaceHotkeysEnabled"
-
-    /// The persisted setting. An absent key — a fresh install — means `true`,
-    /// so strafe's out-of-the-box behaviour is unchanged by this feature.
-    /// `object(forKey:)` rather than `bool(forKey:)` so "never set" is
-    /// distinguishable from a stored `false`.
-    nonisolated static var enabled: Bool {
-        Preferences.store.object(forKey: enabledStorageKey) as? Bool ?? true
+    /// Enabled on first launch; an explicitly saved false remains off.
+    /// Native macOS shortcuts remain enabled.
+    nonisolated static var controlArrowsEnabled: Bool {
+        Preferences.store.object(forKey: controlArrowsStorageKey) as? Bool ?? true
     }
 
-    nonisolated static func persist(enabled: Bool) {
-        Preferences.store.set(enabled, forKey: enabledStorageKey)
+    nonisolated static let controlArrowSetup = """
+        Keep macOS “Move left a space” and “Move right a space” enabled.
+
+        While strafe runs, Control+Left/Right uses your chosen transition speed. \
+        No Option, Command, or Shift key is needed. While Control is held, strafe \
+        pauses those two macOS shortcuts in memory; they return when you release \
+        Control, quit strafe, or turn this option off. Your saved shortcut settings \
+        are never edited.
+
+        This option adds a modifier-key event tap. It sees Control, Shift, Command, \
+        Option and Fn changes only, never letters, numbers or other keys. \
+        Accessibility permission is required.
+        """
+
+    nonisolated static func persist(controlArrowsEnabled: Bool) {
+        Preferences.store.set(controlArrowsEnabled, forKey: controlArrowsStorageKey)
+        notifySettingsChanged()
+    }
+
+    nonisolated private static func notifySettingsChanged() {
         // Flush before notifying so a resident app cannot read the previous value.
         Preferences.store.synchronize()
         DistributedNotificationCenter.default().postNotificationName(
@@ -126,82 +83,4 @@ final class HotkeyManager {
         )
     }
 
-    // MARK: - Internals
-
-    private func installHandlerIfNeeded() {
-        guard eventHandler == nil else { return }
-
-        var spec = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
-
-        let userInfo = Unmanaged.passUnretained(self).toOpaque()
-
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, event, userInfo -> OSStatus in
-                guard let userInfo, let event else { return OSStatus(eventNotHandledErr) }
-                let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-
-                var hotKeyID = EventHotKeyID()
-                let status = GetEventParameter(
-                    event,
-                    EventParamName(kEventParamDirectObject),
-                    EventParamType(typeEventHotKeyID),
-                    nil,
-                    MemoryLayout<EventHotKeyID>.size,
-                    nil,
-                    &hotKeyID
-                )
-                guard status == noErr else { return status }
-
-                // Carbon calls back on the main thread; hop to the main actor.
-                MainActor.assumeIsolated {
-                    manager.handle(id: hotKeyID.id)
-                }
-                return noErr
-            },
-            1,
-            &spec,
-            userInfo,
-            &eventHandler
-        )
-    }
-
-    private func registerHotKey(keyCode: UInt32, id: UInt32, modifiers: UInt32) -> EventHotKeyRef? {
-        let hotKeyID = EventHotKeyID(signature: Self.signature, id: id)
-        var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(
-            keyCode,
-            modifiers,
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &ref
-        )
-        guard status == noErr else {
-            FileHandle.standardError.write(
-                Data("[HotkeyManager] RegisterEventHotKey failed (status \(status)) for id \(id)\n".utf8)
-            )
-            return nil
-        }
-        return ref
-    }
-
-    private func handle(id: UInt32) {
-        let direction: SwitchDirection
-        switch id {
-        case Self.leftID: direction = .left
-        case Self.rightID: direction = .right
-        default: return
-        }
-        do {
-            try engine.switchSpace(direction)
-        } catch {
-            FileHandle.standardError.write(
-                Data("[HotkeyManager] switchSpace failed: \(error)\n".utf8)
-            )
-        }
-    }
 }

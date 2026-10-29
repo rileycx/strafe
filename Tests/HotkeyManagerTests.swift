@@ -1,7 +1,7 @@
 import AppKit
 
 // Compile the production manager with an isolated preferences domain and
-// replacement Carbon registration functions. No real shortcuts are captured.
+// a fake interceptor. No real keyboard events are captured.
 enum Preferences {
     static let domain = CommandLine.arguments[1]
     nonisolated(unsafe) static let store = UserDefaults(suiteName: domain)!
@@ -13,14 +13,20 @@ struct TestEngine: SwitchEngine {
         preconditionFailure("No keyboard events should be delivered during these tests")
     }
 }
-@_silgen_name("test_active_hotkeys") private func activeHotkeys() -> UInt32
-@_silgen_name("test_registration_count") private func registrationCount() -> UInt32
+
+// Isolate settings lifecycle from the real keyboard tap.
+final class ControlArrowInterceptor {
+    private(set) var isRunning = false
+    init(engine: SwitchEngine) {}
+    func start() { isRunning = true }
+    func stop() { isRunning = false }
+}
 
 @main struct HotkeyManagerTests {
     @MainActor static func main() {
         let mode = CommandLine.arguments[2]
         if mode == "on" || mode == "off" {
-            HotkeyManager.persist(enabled: mode == "on")
+            HotkeyManager.persist(controlArrowsEnabled: mode == "on")
             return
         }
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -28,28 +34,31 @@ struct TestEngine: SwitchEngine {
         manager.start()
         defer { manager.stop() }
         if mode == "selftest" {
-            precondition(HotkeyManager.enabled && activeHotkeys() == 2)
+            precondition(Preferences.store.object(forKey: HotkeyManager.controlArrowsStorageKey) == nil)
+            precondition(HotkeyManager.controlArrowsEnabled && manager.controlArrowsRunning)
             manager.start()
             manager.applyStoredState()
+            precondition(manager.controlArrowsRunning)
+            HotkeyManager.persist(controlArrowsEnabled: true)
             manager.applyStoredState()
-            precondition(activeHotkeys() == 2 && registrationCount() == 2)
-            HotkeyManager.persist(enabled: false)
             manager.applyStoredState()
-            precondition(activeHotkeys() == 0)
-            manager.applyStoredState()
-            precondition(activeHotkeys() == 0)
-            HotkeyManager.persist(enabled: true)
-            manager.applyStoredState()
-            precondition(activeHotkeys() == 2 && registrationCount() == 4)
+            precondition(manager.controlArrowsRunning)
             manager.stop()
-            precondition(activeHotkeys() == 0)
+            precondition(!manager.controlArrowsRunning)
             manager.start()
-            precondition(activeHotkeys() == 2)
-            print("PASS: default, repeated enable/disable, and restart")
+            precondition(manager.controlArrowsRunning)
+            HotkeyManager.persist(controlArrowsEnabled: false)
+            manager.applyStoredState()
+            manager.applyStoredState()
+            precondition(!manager.controlArrowsRunning)
+            manager.stop()
+            manager.start()
+            precondition(!HotkeyManager.controlArrowsEnabled && !manager.controlArrowsRunning)
+            print("PASS: default on, saved off survives restart, repeated application, stop, restart")
             return
         }
         precondition(mode == "listen")
-        var previous = activeHotkeys()
+        var previous = (manager.controlArrowsRunning ? 1 : 0)
         print("ACTIVE \(previous)"); fflush(stdout)
         let deadline = Date(timeIntervalSinceNow: 12)
         let timer = Timer(timeInterval: 0.02, repeats: true) { _ in }
@@ -57,7 +66,7 @@ struct TestEngine: SwitchEngine {
         defer { timer.invalidate() }
         while Date() < deadline {
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
-            let current = activeHotkeys()
+            let current = (manager.controlArrowsRunning ? 1 : 0)
             if current != previous {
                 print("ACTIVE \(current)"); fflush(stdout)
                 previous = current

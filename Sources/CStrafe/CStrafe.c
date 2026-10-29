@@ -64,6 +64,21 @@ bool strafe_cgs_available(void) {
            (&CGSCopyManagedDisplaySpaces != NULL);
 }
 
+// --- Native Space shortcuts (symbolic hotkeys 79/81) -----------------------
+// Weak-imported private WindowServer calls. They flip the *live* enabled flag
+// only; the com.apple.symbolichotkeys preference file is never touched.
+extern CGError CGSSetSymbolicHotKeyEnabled(int32_t hotKey, bool enabled) __attribute__((weak_import));
+
+static const int32_t kSymbolicHotKeyMoveLeftASpace  = 79;
+static const int32_t kSymbolicHotKeyMoveRightASpace = 81;
+
+bool strafe_set_space_arrow_shortcuts_enabled(bool enabled) {
+    if (&CGSSetSymbolicHotKeyEnabled == NULL) { return false; }
+    CGError left  = CGSSetSymbolicHotKeyEnabled(kSymbolicHotKeyMoveLeftASpace, enabled);
+    CGError right = CGSSetSymbolicHotKeyEnabled(kSymbolicHotKeyMoveRightASpace, enabled);
+    return left == kCGErrorSuccess && right == kCGErrorSuccess;
+}
+
 // --- Synthesis (SPEC §1.5) ------------------------------------------------
 bool strafe_uses_iohid_payload(void) {
     if (__builtin_available(macOS 27.0, *)) { return true; }
@@ -355,13 +370,15 @@ int32_t strafe_field_gesture_phase(void)    { return (int32_t)kCGEventGesturePha
 //   - Tap re-enable is handled via the kCGEventTapDisabledByTimeout /
 //     ByUserInput callbacks, which the system delivers to the callback
 //     REGARDLESS of the event mask — so dropping keys does not affect re-enable.
-//   - Global switch hotkeys use Carbon RegisterEventHotKey (HotkeyManager), a
-//     separate mechanism that does not depend on this tap seeing key events.
+//   - Optional Control-arrow switching uses ControlArrowInterceptor, a
+//     separate flagsChanged-only tap plus Carbon hotkeys. It does not widen
+//     this gesture-only mask and never receives key-down/up events.
 // Cost of the old mask: every keystroke system-wide round-tripped synchronously
 // through this process's active tap only to be passed through, adding keyboard
 // latency and a wakeup per key. With keys removed the active tap wakes only on
-// real space-swipe gestures, dropping idle keyboard wakeups to zero. Behavior is
-// unchanged because the removed events were never acted upon.
+// real space-swipe gestures. The separate toggleable modifier tap only wakes on
+// modifier changes. Gesture behavior is unchanged because the
+// removed events were never acted upon by this tap.
 uint64_t strafe_tap_event_mask(void) {
     return (1ULL << kCGSEventGesture) | (1ULL << kCGSEventDockControl);
 }

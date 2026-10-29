@@ -109,6 +109,12 @@ uint64_t strafe_tap_event_mask(void);
 // True when App Exposé or Mission Control is up (Dock windows at layers 18/20).
 bool strafe_is_expose_active(void);
 
+// --- Native Space shortcuts -----------------------------------------------
+// Turn the live "Move left/right a space" shortcuts (Control+Left/Right by
+// default) on or off in the WindowServer. Returns false if the private symbol
+// is missing or the call fails. Never edits the preferences file.
+bool strafe_set_space_arrow_shortcuts_enabled(bool enabled);
+
 #ifdef __cplusplus
 }
 #endif

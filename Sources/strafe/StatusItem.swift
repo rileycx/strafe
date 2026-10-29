@@ -17,8 +17,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         title: "Transition speed", action: nil, keyEquivalent: ""
     )
     private var speedItems: [NSMenuItem] = []
-    private let hotkeysItem = NSMenuItem(
-        title: "Space-switch hotkeys (⌃⌥←/→)", action: #selector(toggleHotkeys), keyEquivalent: ""
+    private let controlArrowsItem = NSMenuItem(
+        title: "Speed up Control + ←/→…", action: #selector(toggleControlArrows), keyEquivalent: ""
     )
     private let accessibilityItem = NSMenuItem(
         title: "Accessibility granted: —", action: nil, keyEquivalent: ""
@@ -61,8 +61,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(toggleItem)
         buildSpeedSubmenu(into: menu)
         if hotkeys != nil {
-            hotkeysItem.target = self
-            menu.addItem(hotkeysItem)
+            controlArrowsItem.target = self
+            controlArrowsItem.toolTip = HotkeyManager.controlArrowSetup
+            menu.addItem(controlArrowsItem)
         }
         menu.addItem(accessibilityItem)
 
@@ -149,13 +150,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refresh()
     }
 
-    /// Toggle the Ctrl+Option+Left/Right global hotkeys, independent of the
-    /// gesture tap (`toggleEnabled`). This is the mechanism that can conflict
-    /// with third-party window-tiling shortcuts bound to the same chord.
-    @objc private func toggleHotkeys() {
+    @objc private func toggleControlArrows() {
         guard let hotkeys else { return }
-        let newValue = !HotkeyManager.enabled
-        HotkeyManager.persist(enabled: newValue)
+        let newValue = !HotkeyManager.controlArrowsEnabled
+        if newValue {
+            // Explain what turning it on does; turning it off needs no prompt.
+            let alert = NSAlert()
+            alert.messageText = "Enable Control + arrows?"
+            alert.informativeText = HotkeyManager.controlArrowSetup
+            alert.addButton(withTitle: "Enable")
+            alert.addButton(withTitle: "Cancel")
+            NSApp.activate()
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        HotkeyManager.persist(controlArrowsEnabled: newValue)
         hotkeys.applyStoredState()
         refresh()
     }
@@ -195,6 +203,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
         let granted = Permissions.isAccessibilityGranted
         accessibilityItem.title = "Accessibility granted: \(granted ? "yes" : "no")"
-        hotkeysItem.state = HotkeyManager.enabled ? .on : .off
+        controlArrowsItem.state = HotkeyManager.controlArrowsEnabled ? .on : .off
     }
 }

@@ -84,23 +84,20 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
         print("transition speed: \(speed.title)")
         return 0
 
-    case "hotkeys":
-        // Persist the setting and notify any running menu-bar app to apply it.
-        guard args.count >= 2 else {
-            print("space-switch hotkeys: \(HotkeyManager.enabled ? "on" : "off")")
-            return 0
-        }
-        let enabled: Bool
-        switch args[1] {
-        case "on": enabled = true
-        case "off": enabled = false
-        default:
-            FileHandle.standardError.write(Data(
-                "unknown value '\(args[1])' (expected on|off)\n".utf8))
+    case "control-arrows":
+        guard args.count <= 2 else {
+            FileHandle.standardError.write(Data("usage: strafe control-arrows [on|off]\n".utf8))
             return 2
         }
-        HotkeyManager.persist(enabled: enabled)
-        print("space-switch hotkeys: \(enabled ? "on" : "off")")
+        if args.count == 2 {
+            guard args[1] == "on" || args[1] == "off" else {
+                FileHandle.standardError.write(Data("usage: strafe control-arrows [on|off]\n".utf8))
+                return 2
+            }
+            HotkeyManager.persist(controlArrowsEnabled: args[1] == "on")
+        }
+        print("Control-arrow preference: \(HotkeyManager.controlArrowsEnabled ? "on" : "off")")
+        print(HotkeyManager.controlArrowSetup)
         return 0
 
     default:
@@ -112,7 +109,7 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
           strafe switch left|right    switch space once and exit
           strafe status               print accessibility / tap status
           strafe speed [preset]       show or set the swipe transition speed
-          strafe hotkeys [on|off]     show or set the ctrl+opt+arrow hotkeys
+          strafe control-arrows [on|off]  show or set Control-arrow interception
 
         """.utf8))
         return 2
