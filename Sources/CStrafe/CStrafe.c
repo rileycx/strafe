@@ -324,9 +324,8 @@ CGEventRef strafe_copy_with_release_velocity(CGEventRef event, double velocity) 
     if (!copy) { return NULL; }
     CGEventSetDoubleValueField(copy, kCGEventGestureSwipeVelocityX, velocity);
     // On macOS 27 the Dock reads the velocity in the event's IOHID payload
-    // instead. The payload carries direction in the Natural-scrolling
-    // orientation, the same rule as for posted events (measured on macOS 27.0
-    // with it on).
+    // instead, which carries direction in the Natural-scrolling orientation,
+    // as posted events do.
     CGEventRef patched = strafe_create_event_with_payload_velocity(
         copy, strafe_posted_sign_reversed() ? -velocity : velocity);
     // No payload (before macOS 27): the field above is what the Dock reads.

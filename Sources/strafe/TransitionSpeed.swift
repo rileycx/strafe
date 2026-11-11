@@ -89,7 +89,5 @@ enum TransitionSpeed: Int, StoredPreset {
         TransitionSpeed(rawValue: rawValue) ?? .default
     }
 
-    /// Persisted through `StoredPreset`. An absent key means `default`, so
-    /// strafe's out-of-the-box behaviour is unchanged by this feature.
     static let storageKey = "transitionSpeed"
 }

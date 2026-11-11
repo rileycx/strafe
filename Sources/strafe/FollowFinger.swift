@@ -13,7 +13,6 @@ import Foundation
 enum FollowFinger {
     static let enabledKey = "followFinger"
 
-    /// Off by default, so strafe's out-of-the-box behaviour is unchanged.
     static var enabled: Bool { Preferences.store.bool(forKey: enabledKey) }
 
     static func persist(enabled: Bool) {
@@ -27,10 +26,9 @@ enum FollowFinger {
     /// right, -1 toward the left, nil when the gesture never moved. Positive
     /// progress/velocity means rightward, as for `strafe_event_moves_right`.
     ///
-    /// Mirrors how a native swipe feels: a flick (real releases measure about
-    /// 2–8; a held finger about 0–0.3) settles the way it was moving, so a
-    /// short flick switches and a flick back cancels; a slow release switches
-    /// past halfway and otherwise snaps back.
+    /// A release at |velocity| ≥ 0.5 is a flick (real flicks measure about 2–8,
+    /// a held finger 0–0.3) and settles the way it was moving. A slower release
+    /// switches past halfway and otherwise snaps back.
     static func settleDirection(progress: Double, velocity: Double) -> Double? {
         guard progress != 0 else { return nil }
         if abs(velocity) >= 0.5 { return velocity > 0 ? 1 : -1 }
@@ -82,8 +80,7 @@ struct FollowedSwipe {
 /// Unlike `TransitionSpeed`, these are not measured durations: the Dock's
 /// settle time is not linear in release velocity (synthetic flicks below ~80
 /// animate, above it they jump), so the presets are spaced between a real
-/// release (about 2–8) and that cliff, plus the jump. 130 already felt like a
-/// snap in testing.
+/// release (about 2–8) and that cliff, plus the jump.
 enum ReleaseSpeed: Int, StoredPreset {
     case gentle = 0
     case smooth = 1

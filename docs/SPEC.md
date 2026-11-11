@@ -359,7 +359,6 @@ faster release shortens it.
   untouched, so the Dock runs its own rubber-band.
 - **Release velocity:** real releases are ≈ 2–8. The presets (10 / 20 / 40) stay
   below the ~80 cliff where a flick stops animating (§1.4); 2000 jumps outright.
-  In testing, 130 already felt like a snap.
 - **macOS 27 payload:** the Dock reads a real event's velocity from its embedded
   IOHID payload (field 4205), not from field 129. Rewriting field 129 alone was
   measured to have no effect. `strafe_copy_with_release_velocity` therefore copies
