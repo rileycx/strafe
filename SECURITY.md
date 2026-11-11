@@ -97,10 +97,11 @@ entire blocked swipe, including its terminal event, to prevent a bounce-back.
 With **Follow finger while swiping** on (off by default), strafe suppresses
 nothing: every event of the real swipe passes through, and only its terminal
 `ended` event is replaced by a copy with a different release velocity
-(`strafe_copy_with_release_velocity`, `Sources/CStrafe/IOHIDPayload.c`). On
+(`strafe_copy_with_release_velocity`, `Sources/CStrafe/CStrafe.c`). On
 macOS 27 and later that copy is made by serializing the real event in memory,
 locating its existing IOHID payload (field 4205), and rewriting the velocity in
-it. The payload is validated, edited, and discarded within that one call; it
+it (`strafe_create_event_with_payload_velocity`,
+`Sources/CStrafe/IOHIDPayload.c`). The payload is validated, edited, and discarded within that one call; it
 is never stored or transmitted, and nothing else in it is read or changed. To
 choose the direction, strafe uses the same progress and velocity fields listed
 above, plus the current Space count and index from the topology query below.
@@ -181,7 +182,8 @@ Each of these is verifiable with a single grep over `Sources/`.
   `spaceShortcut.left` / `spaceShortcut.right` (a key code and modifier flags,
   or a cleared shortcut), and `followFinger` / `releaseSpeed` (the follow-finger
   toggle and its preset). See `TransitionSpeed.swift`, `HotkeyManager.swift`,
-  `KeyboardShortcut.swift`, and `FollowFinger.swift`. These never widen the gesture tap's mask.
+  `KeyboardShortcut.swift`, and `FollowFinger.swift`; the presets are read and
+  written by `StoredPreset` in `Preferences.swift`. These never widen the gesture tap's mask.
   Keyboard shortcuts use Carbon `RegisterEventHotKey`, a separate mechanism
   that delivers only registered shortcut activations.
 

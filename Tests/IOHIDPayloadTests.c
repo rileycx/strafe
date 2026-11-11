@@ -87,56 +87,6 @@ static uint32_t read32(const uint8_t *bytes) {
     return value;
 }
 
-// Parse the reserialized event to check that CoreGraphics accepted the payload,
-// including its packed record offsets. No event is posted by these tests.
-static void check_payload(int phase, double progress, double velocity,
-                          int32_t expectedProgress, int32_t expectedVelocity) {
-    CGEventRef event = CGEventCreate(NULL);
-    assert(event);
-    CGEventSetType(event, (CGEventType)30);
-    CGEventSetIntegerValueField(event, 110, 23);
-    CGEventSetIntegerValueField(event, 123, 1);
-    CGEventSetIntegerValueField(event, 132, phase);
-    CGEventSetDoubleValueField(event, 124, progress);
-    CGEventSetDoubleValueField(event, 129, velocity);
-    CGEventRef augmented = strafe_create_augmented_event(event);
-    CFRelease(event);
-    assert(augmented);
-    assert(CGEventGetType(augmented) == 30);
-    assert(CGEventGetIntegerValueField(augmented, 132) == phase);
-    CFDataRef data = CGEventCreateData(NULL, augmented);
-    assert(data);
-    const uint8_t *bytes = CFDataGetBytePtr(data);
-    size_t length = (size_t)CFDataGetLength(data);
-    bool found = false;
-    for (size_t offset = 4; offset + 4 <= length; offset++) {
-        size_t size = ((size_t)bytes[offset] << 8) | bytes[offset + 1];
-        unsigned field = ((unsigned)bytes[offset + 2] << 8) | bytes[offset + 3];
-        if (field == 4205 && (size == 68 || size == 96)) {
-            assert(offset + 4 + size <= length);
-            const uint8_t *payload = bytes + offset + 4;
-            bool hasVelocity = velocity != 0 || phase == 4;
-            assert(size == (hasVelocity ? 96 : 68));
-            assert(read32(payload + 24) == (hasVelocity ? 2 : 1));
-            assert(read32(payload + 28) == 40);
-            assert(read32(payload + 32) == 23);
-            assert(read32(payload + 36) == (uint32_t)phase << 24);
-            assert(payload[60] == 1 && payload[62] == 3);
-            assert((int32_t)read32(payload + 64) == expectedProgress);
-            if (hasVelocity) {
-                assert(read32(payload + 68) == 28);
-                assert(read32(payload + 72) == 9);
-                assert(payload[80] == 1);
-                assert((int32_t)read32(payload + 84) == expectedVelocity);
-            }
-            found = true;
-        }
-    }
-    assert(found);
-    CFRelease(data);
-    CFRelease(augmented);
-}
-
 // Locate the field-4205 payload in a serialized event; returns its size or 0.
 static size_t find_payload(CGEventRef event, uint8_t *copy, size_t capacity) {
     CFDataRef data = CGEventCreateData(NULL, event);
@@ -157,6 +107,7 @@ static size_t find_payload(CGEventRef event, uint8_t *copy, size_t capacity) {
     return found;
 }
 
+// A dock swipe carrying the macOS 27 payload, as a real one does there.
 static CGEventRef real_like_event(int phase, double progress, double velocity) {
     CGEventRef event = CGEventCreate(NULL);
     assert(event);
@@ -170,6 +121,31 @@ static CGEventRef real_like_event(int phase, double progress, double velocity) {
     CFRelease(event);
     assert(augmented);
     return augmented;
+}
+
+// Parse the reserialized event to check that CoreGraphics accepted the payload,
+// including its packed record offsets. No event is posted by these tests.
+static void check_payload(int phase, double progress, double velocity,
+                          int32_t expectedProgress, int32_t expectedVelocity) {
+    CGEventRef augmented = real_like_event(phase, progress, velocity);
+    assert(CGEventGetType(augmented) == 30);
+    assert(CGEventGetIntegerValueField(augmented, 132) == phase);
+    uint8_t payload[96];
+    bool hasVelocity = velocity != 0 || phase == 4;
+    assert(find_payload(augmented, payload, sizeof(payload)) == (hasVelocity ? 96 : 68));
+    assert(read32(payload + 24) == (hasVelocity ? 2 : 1));
+    assert(read32(payload + 28) == 40);
+    assert(read32(payload + 32) == 23);
+    assert(read32(payload + 36) == (uint32_t)phase << 24);
+    assert(payload[60] == 1 && payload[62] == 3);
+    assert((int32_t)read32(payload + 64) == expectedProgress);
+    if (hasVelocity) {
+        assert(read32(payload + 68) == 28);
+        assert(read32(payload + 72) == 9);
+        assert(payload[80] == 1);
+        assert((int32_t)read32(payload + 84) == expectedVelocity);
+    }
+    CFRelease(augmented);
 }
 
 // Follow-finger: the release velocity is replaced inside the payload (in the

@@ -38,11 +38,12 @@ enum FollowFinger {
         return abs(progress) >= 0.5 ? towardProgress : -towardProgress
     }
 
-    /// Whether the display under the cursor has a Space in that direction, or
-    /// nil if topology cannot be read.
-    static func liveNeighborExists(right: Bool) -> Bool? {
+    /// Whether the display under the cursor has a Space in that direction.
+    /// Assumed so when topology cannot be read, as the engine's bounds guard
+    /// does (`GestureSwitchEngine.switchSpace`).
+    static func liveNeighborExists(right: Bool) -> Bool {
         var info = StrafeInfo()
-        guard strafe_get_space_info(&info) else { return nil }
+        guard strafe_get_space_info(&info) else { return true }
         return right ? info.currentIndex + 1 < info.spaceCount : info.currentIndex > 0
     }
 }
@@ -65,13 +66,13 @@ struct FollowedSwipe {
     /// when the gesture never moved, or when it would settle on a Space that
     /// does not exist (macOS then runs its own rubber-band).
     func releaseVelocity(progress: Double, velocity: Double,
-                         neighborExists: (_ right: Bool) -> Bool?) -> Double? {
+                         neighborExists: (_ right: Bool) -> Bool) -> Double? {
         let progress = progress != 0 ? progress : lastProgress
         let velocity = velocity != 0 ? velocity : lastVelocity
         guard let direction = FollowFinger.settleDirection(progress: progress, velocity: velocity)
         else { return nil }
         let switching = (direction > 0) == (progress > 0)
-        if switching, neighborExists(direction > 0) == false { return nil }
+        if switching, !neighborExists(direction > 0) { return nil }
         return direction * speed.velocity
     }
 }
@@ -83,7 +84,7 @@ struct FollowedSwipe {
 /// animate, above it they jump), so the presets are spaced between a real
 /// release (about 2–8) and that cliff, plus the jump. 130 already felt like a
 /// snap in testing.
-enum ReleaseSpeed: Int, CaseIterable {
+enum ReleaseSpeed: Int, StoredPreset {
     case gentle = 0
     case smooth = 1
     case quick = 2
@@ -113,21 +114,5 @@ enum ReleaseSpeed: Int, CaseIterable {
     /// Stable identifier for `strafe release <name>`.
     var name: String { String(describing: self) }
 
-    init?(name: String) {
-        guard let match = ReleaseSpeed.allCases.first(where: { $0.name == name }) else { return nil }
-        self = match
-    }
-
-    // MARK: - Persistence
-
     static let storageKey = "releaseSpeed"
-
-    static var stored: ReleaseSpeed {
-        guard let raw = Preferences.store.object(forKey: storageKey) as? Int else { return .default }
-        return ReleaseSpeed(rawValue: raw) ?? .default
-    }
-
-    func persist() {
-        Preferences.store.set(rawValue, forKey: ReleaseSpeed.storageKey)
-    }
 }

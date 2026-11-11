@@ -43,7 +43,7 @@ final class SwipeInterceptor: @unchecked Sendable {
 
     // Follow-finger mode (SPEC §2.6). Main-run-loop confined.
     private let releaseSpeed: () -> ReleaseSpeed?
-    private let neighborExists: (_ right: Bool) -> Bool?
+    private let neighborExists: (_ right: Bool) -> Bool
     /// The real swipe being followed, or nil in the default (instant) mode.
     private var followed: FollowedSwipe?
 
@@ -51,7 +51,7 @@ final class SwipeInterceptor: @unchecked Sendable {
          isExposeActive: @escaping () -> Bool = { strafe_is_expose_active() },
          accessibilityGranted: @escaping () -> Bool = { Permissions.isAccessibilityGranted },
          releaseSpeed: @escaping () -> ReleaseSpeed? = { FollowFinger.activeReleaseSpeed },
-         neighborExists: @escaping (_ right: Bool) -> Bool? = FollowFinger.liveNeighborExists,
+         neighborExists: @escaping (_ right: Bool) -> Bool = FollowFinger.liveNeighborExists,
          makeTap: @escaping (CGEventTapCallBack, UnsafeMutableRawPointer) -> (any SwipeEventTap)? = SystemSwipeEventTap.make) {
         self.engine = engine
         self.isExposeActive = isExposeActive
@@ -221,7 +221,10 @@ final class SwipeInterceptor: @unchecked Sendable {
             // Let real gestures through while an overlay (Exposé) is up (SPEC §2.5).
             if isExposeActive() { return passthrough }
             if let speed = releaseSpeed() {
-                // Follow-finger: let the real swipe drive the native slide.
+                // Follow-finger: let the real swipe drive the native slide. Drop
+                // any instant-mode swipe whose end never arrived, so it cannot
+                // go on suppressing this one's companion events.
+                resetGesture()
                 followed = FollowedSwipe(speed: speed)
                 return passthrough
             }
@@ -295,20 +298,24 @@ final class SwipeInterceptor: @unchecked Sendable {
         let passthrough = Unmanaged.passUnretained(event)
         let progress = strafe_event_swipe_progress(event)
         let velocity = strafe_event_swipe_velocity_x(event)
-        if phase == strafe_gesture_phase_changed() {
+        switch phase {
+        case strafe_gesture_phase_changed():
             followed?.track(progress: progress, velocity: velocity)
             return passthrough
+        case strafe_gesture_phase_ended():
+            defer { followed = nil }
+            guard let release = followed?.releaseVelocity(progress: progress, velocity: velocity,
+                                                          neighborExists: neighborExists),
+                  let replacement = strafe_copy_with_release_velocity(event, release)
+            else { return passthrough }
+            // The event system releases a replacement event, so hand it over at +1.
+            return Unmanaged.passRetained(replacement)
+        case strafe_gesture_phase_cancelled():
+            followed = nil
+            return passthrough
+        default:
+            return passthrough
         }
-        guard phase == strafe_gesture_phase_ended() || phase == strafe_gesture_phase_cancelled(),
-              let swipe = followed else { return passthrough }
-        followed = nil
-        guard phase == strafe_gesture_phase_ended(),
-              let release = swipe.releaseVelocity(progress: progress, velocity: velocity,
-                                                  neighborExists: neighborExists),
-              let replacement = strafe_copy_with_release_velocity(event, release)
-        else { return passthrough }
-        // The event system releases a replacement event, so hand it over at +1.
-        return Unmanaged.passRetained(replacement)
     }
 
     private func fire(_ direction: SwitchDirection) {

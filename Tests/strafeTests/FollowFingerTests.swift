@@ -66,6 +66,19 @@ final class FollowFingerTests: XCTestCase {
         XCTAssertTrue(handle(stray, interceptor) === stray)
     }
 
+    func testFollowedSwipeDropsUnfinishedInstantSwipe() {
+        var speed: ReleaseSpeed?
+        let interceptor = SwipeInterceptor(engine: FollowRecordingEngine(), isExposeActive: { false },
+                                           releaseSpeed: { speed }, neighborExists: { _ in true })
+        // An instant-mode swipe whose end never arrives, then the mode is turned on.
+        XCTAssertNil(handle(event(1, progress: 0, velocity: 0), interceptor))
+        speed = .smooth
+        let began = event(1, progress: 0, velocity: 0)
+        XCTAssertTrue(handle(began, interceptor) === began)
+        let companion = event(2, progress: 0, velocity: 0, cgsType: 29)
+        XCTAssertTrue(handle(companion, interceptor) === companion)
+    }
+
     func testDisabledKeepsInstantMode() {
         let engine = FollowRecordingEngine()
         let interceptor = SwipeInterceptor(engine: engine, isExposeActive: { false },

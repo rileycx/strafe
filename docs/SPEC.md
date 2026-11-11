@@ -363,8 +363,9 @@ faster release shortens it.
 - **macOS 27 payload:** the Dock reads a real event's velocity from its embedded
   IOHID payload (field 4205), not from field 129. Rewriting field 129 alone was
   measured to have no effect. `strafe_copy_with_release_velocity` therefore copies
-  the event, finds and validates the existing payload record, and replaces (or adds)
-  its velocity child. Like posted events (`strafe_posted_sign_reversed`), the
+  the event and has `strafe_create_event_with_payload_velocity` (`IOHIDPayload.c`)
+  find and validate the existing payload record and replace (or add) its velocity
+  child. Like posted events (`strafe_posted_sign_reversed`), the
   payload carries direction in the Natural-scrolling orientation: with Natural
   scrolling on, every measured real payload had the opposite sign to fields
   124/129. Before macOS 27 there is no payload and field 129 is what the Dock reads.

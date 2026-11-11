@@ -70,7 +70,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(toggleItem)
         followItem.target = self
         menu.addItem(followItem)
-        buildReleaseSubmenu(into: menu)
+        // Follow-finger release presets; shown only while that mode is on.
+        releaseItems = addPresetSubmenu(ReleaseSpeed.self, to: releaseItem, action: #selector(selectRelease(_:)))
+        menu.addItem(releaseItem)
         buildSpeedSubmenu(into: menu)
         if hotkeys != nil {
             hotkeysItem.target = self
@@ -129,35 +131,25 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func buildSpeedSubmenu(into menu: NSMenu) {
         guard engine != nil else { return }
 
-        let submenu = NSMenu()
-        for speed in TransitionSpeed.allCases {
-            let item = NSMenuItem(
-                title: speed.title, action: #selector(selectSpeed(_:)), keyEquivalent: ""
-            )
-            item.target = self
-            item.tag = speed.rawValue
-            submenu.addItem(item)
-            speedItems.append(item)
-        }
-
-        speedItem.submenu = submenu
+        speedItems = addPresetSubmenu(TransitionSpeed.self, to: speedItem, action: #selector(selectSpeed(_:)))
         menu.addItem(speedItem)
     }
 
-    /// Follow-finger release presets; shown only while that mode is on.
-    private func buildReleaseSubmenu(into menu: NSMenu) {
+    /// Give `parent` a submenu with one checkable item per preset, tagged with
+    /// the preset's raw value. Returns the items so `refresh` can check one.
+    private func addPresetSubmenu<Preset: StoredPreset>(
+        _: Preset.Type, to parent: NSMenuItem, action: Selector
+    ) -> [NSMenuItem] {
         let submenu = NSMenu()
-        for speed in ReleaseSpeed.allCases {
-            let item = NSMenuItem(
-                title: speed.title, action: #selector(selectRelease(_:)), keyEquivalent: ""
-            )
+        let items = Preset.allCases.map { preset in
+            let item = NSMenuItem(title: preset.title, action: action, keyEquivalent: "")
             item.target = self
-            item.tag = speed.rawValue
-            submenu.addItem(item)
-            releaseItems.append(item)
+            item.tag = preset.rawValue
+            return item
         }
-        releaseItem.submenu = submenu
-        menu.addItem(releaseItem)
+        items.forEach(submenu.addItem)
+        parent.submenu = submenu
+        return items
     }
 
     // MARK: - NSMenuDelegate
