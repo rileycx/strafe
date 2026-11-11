@@ -37,13 +37,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let speed = NSPopUpButton(frame: .zero, pullsDown: false)
     private let message = NSTextField(wrappingLabelWithString: "")
     private let swipeStatus = NSTextField(wrappingLabelWithString: "")
+    private let followFinger = NSButton(checkboxWithTitle: "Follow finger while swiping", target: nil, action: nil)
+    private let release = NSPopUpButton(frame: .zero, pullsDown: false)
     private var statusTimer: Timer?
 
     init(hotkeys: HotkeyManager, engine: GestureSwitchEngine?, interceptor: SwipeInterceptor) {
         self.hotkeys = hotkeys
         self.engine = engine
         self.interceptor = interceptor
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 550, height: 600),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 550, height: 660),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "strafe Settings"
         window.isReleasedWhenClosed = false
@@ -135,7 +137,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         speed.isEnabled = engine != nil
         speed.setAccessibilityLabel("Transition speed for swipes and keyboard shortcuts")
         stack.addArrangedSubview(NSStackView(views: [NSTextField(labelWithString: "Transition speed"), speed]))
-        let speedHelp = NSTextField(wrappingLabelWithString: "Applies to both trackpad swipes and keyboard shortcuts.")
+        let speedHelp = NSTextField(wrappingLabelWithString: "Applies to keyboard shortcuts, and to trackpad swipes unless Follow finger is on.")
         speedHelp.font = .systemFont(ofSize: 12)
         speedHelp.textColor = .secondaryLabelColor
         stack.addArrangedSubview(speedHelp)
@@ -148,12 +150,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let gestures = NSTextField(labelWithString: "Trackpad gestures")
         gestures.font = .systemFont(ofSize: 16, weight: .semibold)
         stack.addArrangedSubview(gestures)
+        followFinger.target = self
+        followFinger.action = #selector(toggleFollow)
+        stack.addArrangedSubview(followFinger)
+        let followHelp = NSTextField(wrappingLabelWithString: "Preserves the native gesture animation.")
+        followHelp.font = .systemFont(ofSize: 12)
+        followHelp.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(followHelp)
+        followHelp.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        release.addItems(withTitles: ReleaseSpeed.allCases.map(\.title))
+        release.target = self
+        release.action = #selector(changeRelease)
+        release.setAccessibilityLabel("Release speed for follow-finger swipes")
+        stack.addArrangedSubview(NSStackView(views: [NSTextField(labelWithString: "Release speed"), release]))
         swipeStatus.font = .systemFont(ofSize: 12)
         swipeStatus.textColor = .secondaryLabelColor
         stack.addArrangedSubview(swipeStatus)
         swipeStatus.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -24).isActive = true
-        window?.setContentSize(NSSize(width: 550, height: 600))
+        window?.setContentSize(NSSize(width: 550, height: 660))
     }
 
     private func refresh() {
@@ -165,6 +180,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         if let error = hotkeys.registrationError { message.stringValue = error }
         speed.selectItem(at: (engine?.transitionSpeed ?? TransitionSpeed.stored).rawValue)
+        followFinger.state = FollowFinger.enabled ? .on : .off
+        release.selectItem(at: ReleaseSpeed.stored.rawValue)
+        release.isEnabled = FollowFinger.enabled
         refreshSwipeStatus()
     }
 
@@ -223,6 +241,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         hotkeys.applyStoredState()
         message.stringValue = hotkeys.registrationError ?? ""
         refresh()
+    }
+
+    @objc private func toggleFollow() {
+        FollowFinger.persist(enabled: followFinger.state == .on)
+        refresh()
+    }
+
+    @objc private func changeRelease() {
+        ReleaseSpeed(rawValue: release.indexOfSelectedItem)?.persist()
     }
 
     @objc private func changeSpeed() {

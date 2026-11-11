@@ -43,6 +43,13 @@ bool strafe_posted_sign_reversed(void);
 bool strafe_event_moves_right(double progressOrVelocity);
 void strafe_clear_swipe_motion(CGEventRef event);
 
+// --- Follow-finger release (SPEC §2.6) ------------------------------------
+// Copy a REAL dock-swipe `ended` event with its release velocity replaced
+// (positive = toward the Space on the right): field 129, and on macOS 27 the
+// velocity inside its embedded IOHID payload (field 4205), which is what the
+// Dock reads there. Returns NULL only if the event cannot be copied.
+CGEventRef strafe_copy_with_release_velocity(CGEventRef event, double velocity) CF_RETURNS_RETAINED;
+
 // --- Synthesis (SPEC §1.4, §1.5) ------------------------------------------
 // Post one instant single-step dock swipe: began -> changed -> ended, all
 // immediately with no delay, to kCGSessionEventTap. Returns false only if an

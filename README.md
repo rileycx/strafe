@@ -175,6 +175,20 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   macOS's own animated switch — and that is already what you get with strafe
   turned off.
 
+- **Follow finger while swiping** *(menu bar, Settings › Trackpad gestures, or
+  `strafe follow on|off`)* — an alternative to the instant swipe. Your real
+  swipe passes through, so the Space slides under your fingers and you can drag
+  partway and go back. When you lift your fingers, strafe raises the release
+  velocity, so the slide keeps its momentum but settles much sooner and the
+  new Space takes input sooner. A short flick still switches; a slow drag
+  switches past halfway and otherwise snaps back. At the first or last Space,
+  macOS's own rubber-band is left alone. Off by default. Transition speed
+  still applies to keyboard shortcuts.
+
+  **Release speed** *(Settings › Trackpad gestures, menu bar, or
+  `strafe release [preset]`)* sets how quickly that slide settles: Gentle,
+  Smooth (the default), Quick, or Instant (no slide).
+
 - **Hide from menu bar** *(menu bar › Hide from menu bar)* — hide the strafe
   icon from the menu bar. The app keeps running: swipes and shortcuts still work.
   To get the icon back, open strafe again. The icon also returns on every fresh
@@ -187,6 +201,8 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   strafe status              # print accessibility / tap status
   strafe speed [preset]      # show or set transition speed
   strafe hotkeys [on|off]    # show or set Space-switch hotkeys
+  strafe follow [on|off]     # show or set finger-tracking swipes
+  strafe release [preset]    # show or set the follow-finger release speed
   strafe                     # start the menu-bar app
   ```
 
@@ -200,7 +216,7 @@ The tap sees only trackpad gesture and dock-control events. It does **not** see
 keystrokes: the event mask excludes key events entirely. The settings recorder
 receives key combinations only in strafe's focused window while recording.
 strafe has no network, telemetry, direct file access, or subprocess code. It saves your transition
-speed and hotkey preferences; AppKit also saves menu-bar icon visibility, which strafe resets
+speed, hotkey, and follow-finger preferences; AppKit also saves menu-bar icon visibility, which strafe resets
 on launch. See [SECURITY.md](SECURITY.md) for the exact file and line
 pointers.
 

@@ -110,6 +110,46 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
         print("space-switch hotkeys: \(enabled ? "on" : "off")")
         return 0
 
+    case "release":
+        // Follow-finger release speed; read by the running app on each swipe.
+        guard args.count >= 2 else {
+            let current = ReleaseSpeed.stored
+            print("release speed: \(current.title)")
+            let width = ReleaseSpeed.allCases.map(\.name.count).max() ?? 0
+            for speed in ReleaseSpeed.allCases {
+                let mark = speed == current ? "*" : " "
+                let pad = String(repeating: " ", count: width - speed.name.count)
+                print("  \(mark) \(speed.name)\(pad)  \(speed.title)")
+            }
+            return 0
+        }
+        guard let speed = ReleaseSpeed(name: args[1]) else {
+            let names = ReleaseSpeed.allCases.map(\.name).joined(separator: "|")
+            FileHandle.standardError.write(Data(
+                "unknown release speed '\(args[1])' (expected \(names))\n".utf8))
+            return 2
+        }
+        speed.persist()
+        print("release speed: \(speed.title)")
+        return 0
+
+    case "follow":
+        // Read by the running app at the start of each swipe; no restart needed.
+        guard args.count >= 2 else {
+            print("follow finger: \(FollowFinger.enabled ? "on" : "off")")
+            return 0
+        }
+        switch args[1] {
+        case "on": FollowFinger.persist(enabled: true)
+        case "off": FollowFinger.persist(enabled: false)
+        default:
+            FileHandle.standardError.write(Data(
+                "unknown value '\(args[1])' (expected on|off)\n".utf8))
+            return 2
+        }
+        print("follow finger: \(args[1])")
+        return 0
+
     default:
         FileHandle.standardError.write(Data("""
         strafe — near-instant macOS Spaces switching
@@ -121,6 +161,8 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
           strafe status               print accessibility / tap status
           strafe speed [preset]       show or set the swipe transition speed
           strafe hotkeys [on|off]     show or set keyboard shortcut enablement
+          strafe follow [on|off]      show or set finger-tracking swipes
+          strafe release [preset]     show or set the follow-finger release speed
 
         """.utf8))
         return 2

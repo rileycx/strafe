@@ -6,7 +6,7 @@ import XCTest
 final class BoundaryTests: XCTestCase {
     func testOverlaySwipePassesThroughWithoutSwitching() {
         let engine = RecordingEngine()
-        let interceptor = SwipeInterceptor(engine: engine, isExposeActive: { true })
+        let interceptor = SwipeInterceptor(engine: engine, isExposeActive: { true }, releaseSpeed: { nil })
         for phase: Int64 in [1, 2, 4] {
             let sample = event(phase)
             let result = interceptor.handle(type: CGEventType(rawValue: 30)!, event: sample)
@@ -36,7 +36,7 @@ final class BoundaryTests: XCTestCase {
 
     func testBlockedSwipeSuppressesEndAndNextSwipeStillWorks() {
         let engine = RecordingEngine()
-        let interceptor = SwipeInterceptor(engine: engine, isExposeActive: { false })
+        let interceptor = SwipeInterceptor(engine: engine, isExposeActive: { false }, releaseSpeed: { nil })
         engine.atEdge = true
         XCTAssertNil(send(1, to: interceptor))
         XCTAssertNil(send(2, to: interceptor))
@@ -63,7 +63,7 @@ final class BoundaryTests: XCTestCase {
     func testBlockedDiscreteSwipeSuppressesItsTerminalEvent() {
         let engine = RecordingEngine()
         engine.atEdge = true
-        let interceptor = SwipeInterceptor(engine: engine, isExposeActive: { false })
+        let interceptor = SwipeInterceptor(engine: engine, isExposeActive: { false }, releaseSpeed: { nil })
         XCTAssertNil(send(1, to: interceptor))
         XCTAssertNil(send(4, to: interceptor))
         XCTAssertEqual(engine.attempts, 1)

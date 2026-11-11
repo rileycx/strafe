@@ -94,6 +94,17 @@ through with its motion cleared after a replacement switch so the Dock can
 finish its gesture state. At the first or last Space, strafe suppresses the
 entire blocked swipe, including its terminal event, to prevent a bounce-back.
 
+With **Follow finger while swiping** on (off by default), strafe suppresses
+nothing: every event of the real swipe passes through, and only its terminal
+`ended` event is replaced by a copy with a different release velocity
+(`strafe_copy_with_release_velocity`, `Sources/CStrafe/IOHIDPayload.c`). On
+macOS 27 and later that copy is made by serializing the real event in memory,
+locating its existing IOHID payload (field 4205), and rewriting the velocity in
+it. The payload is validated, edited, and discarded within that one call; it
+is never stored or transmitted, and nothing else in it is read or changed. To
+choose the direction, strafe uses the same progress and velocity fields listed
+above, plus the current Space count and index from the topology query below.
+
 Beyond the swipe event itself, strafe also calls `CGWindowListCopyWindowInfo`
 (reading window owner names and layer numbers, to detect whether Exposé/Mission
 Control is open so it can pass real swipes through — `strafe_is_expose_active`,
@@ -166,10 +177,11 @@ Each of these is verifiable with a single grep over `Sources/`.
 
 - **Persistence is limited to settings.** strafe stores no databases and no
   caches. Its `UserDefaults` values include `transitionSpeed` (the selected
-  transition preset), `spaceHotkeysEnabled` (the keyboard-shortcut toggle), and
+  transition preset), `spaceHotkeysEnabled` (the keyboard-shortcut toggle),
   `spaceShortcut.left` / `spaceShortcut.right` (a key code and modifier flags,
-  or a cleared shortcut). See `TransitionSpeed.swift`, `HotkeyManager.swift`,
-  and `KeyboardShortcut.swift`. These never widen the gesture tap's mask.
+  or a cleared shortcut), and `followFinger` / `releaseSpeed` (the follow-finger
+  toggle and its preset). See `TransitionSpeed.swift`, `HotkeyManager.swift`,
+  `KeyboardShortcut.swift`, and `FollowFinger.swift`. These never widen the gesture tap's mask.
   Keyboard shortcuts use Carbon `RegisterEventHotKey`, a separate mechanism
   that delivers only registered shortcut activations.
 
@@ -211,7 +223,9 @@ space swipe, suppress the slow animated version, and post a faster synthetic
 dock swipe in its place — that requires an active tap, which requires
 Accessibility. (How much faster is the **Transition speed** setting; at every
 preset it is the same event family, posted to the same tap, and it changes
-nothing about what strafe can see.) See `Sources/strafe/Permissions.swift` for
+nothing about what strafe can see. **Follow finger while swiping** uses the
+same active tap to replace the real swipe's release event with a faster copy;
+it widens neither the mask nor what strafe reads.) See `Sources/strafe/Permissions.swift` for
 the trust check (`AXIsProcessTrusted` / `AXIsProcessTrustedWithOptions`), which
 is the only permission strafe requests.
 

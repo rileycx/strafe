@@ -21,6 +21,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let hotkeysItem = NSMenuItem(
         title: "Space-switch hotkeys", action: #selector(toggleHotkeys), keyEquivalent: ""
     )
+    private let followItem = NSMenuItem(
+        title: "Follow finger while swiping", action: #selector(toggleFollow), keyEquivalent: ""
+    )
+    private let releaseItem = NSMenuItem(title: "Release speed", action: nil, keyEquivalent: "")
+    private var releaseItems: [NSMenuItem] = []
     private let accessibilityItem = NSMenuItem(
         title: "Accessibility granted: —", action: nil, keyEquivalent: ""
     )
@@ -63,6 +68,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         engine?.setTransitionSpeed(TransitionSpeed.stored)
 
         menu.addItem(toggleItem)
+        followItem.target = self
+        menu.addItem(followItem)
+        buildReleaseSubmenu(into: menu)
         buildSpeedSubmenu(into: menu)
         if hotkeys != nil {
             hotkeysItem.target = self
@@ -136,6 +144,22 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(speedItem)
     }
 
+    /// Follow-finger release presets; shown only while that mode is on.
+    private func buildReleaseSubmenu(into menu: NSMenu) {
+        let submenu = NSMenu()
+        for speed in ReleaseSpeed.allCases {
+            let item = NSMenuItem(
+                title: speed.title, action: #selector(selectRelease(_:)), keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = speed.rawValue
+            submenu.addItem(item)
+            releaseItems.append(item)
+        }
+        releaseItem.submenu = submenu
+        menu.addItem(releaseItem)
+    }
+
     // MARK: - NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -155,6 +179,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refresh()
     }
 
+    /// Pick a follow-finger release preset. Applies from the next swipe.
+    @objc private func selectRelease(_ sender: NSMenuItem) {
+        ReleaseSpeed(rawValue: sender.tag)?.persist()
+        refresh()
+    }
+
     /// Pick a transition speed. Persisted so the choice survives a relaunch.
     @objc private func selectSpeed(_ sender: NSMenuItem) {
         let speed = TransitionSpeed.from(rawValue: sender.tag)
@@ -171,6 +201,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let newValue = !HotkeyManager.enabled
         HotkeyManager.persist(enabled: newValue)
         hotkeys.applyStoredState()
+        refresh()
+    }
+
+    /// Switch between the instant swipe and the finger-tracking swipe that
+    /// only speeds up the release (FollowFinger.swift).
+    @objc private func toggleFollow() {
+        FollowFinger.persist(enabled: !FollowFinger.enabled)
         refresh()
     }
 
@@ -209,5 +246,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
         accessibilityItem.title = interceptor.statusDescription
         hotkeysItem.state = HotkeyManager.enabled ? .on : .off
+        followItem.state = FollowFinger.enabled ? .on : .off
+        releaseItem.isHidden = !FollowFinger.enabled
+        let release = ReleaseSpeed.stored
+        releaseItem.title = "Release speed: \(release.title)"
+        for item in releaseItems { item.state = item.tag == release.rawValue ? .on : .off }
     }
 }
