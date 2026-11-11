@@ -5,7 +5,8 @@ tap. That is a lot of trust to ask for, so this document states exactly what
 strafe can and cannot do, and how to verify every claim yourself. Every claim
 below points at a file and line you can read or a command you can run.
 
-The whole program is about **1,486 lines** of Swift + C (`wc -l Sources/**`).
+The whole program is about **2,870 lines** of Swift + C
+(`cat Sources/strafe/*.swift Sources/CStrafe/*.[ch] Sources/CStrafe/include/*.h | wc -l`).
 You can build it from source in about 30 seconds (`swift build`) and audit it
 in an afternoon.
 
@@ -28,7 +29,7 @@ do so. The tap's event mask is defined in exactly one place, and it covers
 **only gesture and dock-control events** — not keystrokes.
 
 - **Tap mask definition:** `Sources/CStrafe/CStrafe.c`, function
-  `strafe_tap_event_mask()` (line 289):
+  `strafe_tap_event_mask()` (line 383):
 
   ```c
   uint64_t strafe_tap_event_mask(void) {
@@ -42,7 +43,7 @@ do so. The tap's event mask is defined in exactly one place, and it covers
 
 - **Why keys are excluded — determination comment:** immediately above that
   function in `Sources/CStrafe/CStrafe.c` (the `KEY-EVENTS-IN-MASK
-  DETERMINATION` block, lines 267–288) documents that an earlier revision
+  DETERMINATION` block, lines 361–382) documents that an earlier revision
   masked key events, that they were never acted on, and that they were
   removed. The tap now wakes only on real space-swipe gestures.
 
@@ -60,7 +61,7 @@ do so. The tap's event mask is defined in exactly one place, and it covers
 
 **The system-wide gesture tap cannot observe what you type.**
 A key event fails the `cgsType == dockControl || cgsType == gesture` guard
-(`SwipeInterceptor.handle`, line 144) and is passed straight through, but in
+(`SwipeInterceptor.handle`, line 191) and is passed straight through, but in
 practice a key event is never even delivered to the callback because it is not
 in the tap's mask. The settings shortcut recorder receives key events only
 while recording in strafe's own focused window. It saves the chosen key code
@@ -70,7 +71,7 @@ monitor or additional event tap.
 ### Exactly what event data strafe touches
 
 For the gesture events it does see, strafe reads a small fixed set of fields via
-the wrappers in `Sources/CStrafe/CStrafe.c` (lines 221–242):
+the wrappers in `Sources/CStrafe/CStrafe.c` (lines 284–305):
 
 - CGS event type (field 55) — `strafe_event_cgs_type`
 - IOHID gesture type (field 110) — `strafe_event_hid_type`
@@ -109,9 +110,9 @@ above, plus the current Space count and index from the topology query below.
 Beyond the swipe event itself, strafe also calls `CGWindowListCopyWindowInfo`
 (reading window owner names and layer numbers, to detect whether Exposé/Mission
 Control is open so it can pass real swipes through — `strafe_is_expose_active`,
-`Sources/CStrafe/CStrafe.c` line 295) and reads the current cursor location to
+`Sources/CStrafe/CStrafe.c` line 389) and reads the current cursor location to
 pick which display to switch on (`copy_cursor_display_identifier`, same file
-line 112). Neither the window list nor the cursor position is stored or
+line 175). Neither the window list nor the cursor position is stored or
 transmitted; both are read, used for that one decision, and discarded.
 
 On macOS 27 and later, strafe also reads one system preference when it posts a
@@ -143,7 +144,7 @@ Each of these is verifiable with a single grep over `Sources/`.
 - **No third-party dependencies.** `Package.swift` declares no `dependencies`
   and no `.package(...)` entries — only Apple system frameworks
   (`ApplicationServices`, `CoreFoundation`, `CoreGraphics`, `IOKit`). Read the
-  35-line `Package.swift` in full.
+  40-line `Package.swift` in full.
 
 - **No analytics or telemetry.** strafe writes only to the process's own
   `stderr` (`grep -rn FileHandle.standardError Sources/`) and `stdout` (the
@@ -160,7 +161,7 @@ Each of these is verifiable with a single grep over `Sources/`.
 
 - **No dynamic loading.** strafe does not `dlopen`/`dlsym` anything. The private
   CGS symbols it uses are weak-imported at link time and guarded by an address
-  check (`strafe_cgs_available`, `CStrafe.c` line 57):
+  check (`strafe_cgs_available`, `CStrafe.c` line 61):
 
   ```
   grep -rniE 'dlopen|dlsym' Sources/    # zero hits
