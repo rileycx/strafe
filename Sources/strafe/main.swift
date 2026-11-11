@@ -27,6 +27,7 @@ if args.isEmpty || args == ["settings"] {
 // MARK: - CLI mode
 
 func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
+    let argument = args.dropFirst().first
     switch args.first {
     case "switch":
         guard args.count >= 2 else {
@@ -70,45 +71,21 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
     case "speed":
         // Same setting the menu-bar "Transition speed" submenu writes; a running
         // menu-bar app won't notice until relaunch.
-        guard args.count >= 2 else {
-            let current = TransitionSpeed.stored
-            print("transition speed: \(current.title)")
-            let width = TransitionSpeed.allCases.map(\.name.count).max() ?? 0
-            for speed in TransitionSpeed.allCases {
-                let mark = speed == current ? "*" : " "
-                let pad = String(repeating: " ", count: width - speed.name.count)
-                print("  \(mark) \(speed.name)\(pad)  \(speed.title)")
-            }
-            return 0
-        }
-        guard let speed = TransitionSpeed(name: args[1]) else {
-            let names = TransitionSpeed.allCases.map(\.name).joined(separator: "|")
-            FileHandle.standardError.write(Data(
-                "unknown speed '\(args[1])' (expected \(names))\n".utf8))
-            return 2
-        }
-        speed.persist()
-        print("transition speed: \(speed.title)")
-        return 0
+        return showOrSetPreset(TransitionSpeed.self, label: "transition speed", argument: argument)
 
     case "hotkeys":
         // Persist the setting and notify any running menu-bar app to apply it.
-        guard args.count >= 2 else {
-            print("space-switch hotkeys: \(HotkeyManager.enabled ? "on" : "off")")
-            return 0
-        }
-        let enabled: Bool
-        switch args[1] {
-        case "on": enabled = true
-        case "off": enabled = false
-        default:
-            FileHandle.standardError.write(Data(
-                "unknown value '\(args[1])' (expected on|off)\n".utf8))
-            return 2
-        }
-        HotkeyManager.persist(enabled: enabled)
-        print("space-switch hotkeys: \(enabled ? "on" : "off")")
-        return 0
+        return showOrSetToggle(label: "space-switch hotkeys", argument: argument,
+                               current: { HotkeyManager.enabled }, persist: HotkeyManager.persist(enabled:))
+
+    case "release":
+        // Follow-finger release speed; read by the running app on each swipe.
+        return showOrSetPreset(ReleaseSpeed.self, label: "release speed", argument: argument)
+
+    case "follow":
+        // Read by the running app at the start of each swipe; no restart needed.
+        return showOrSetToggle(label: "follow finger", argument: argument,
+                               current: { FollowFinger.enabled }, persist: FollowFinger.persist(enabled:))
 
     default:
         FileHandle.standardError.write(Data("""
@@ -121,10 +98,53 @@ func runCLI(_ args: [String], engine: GestureSwitchEngine) -> Int32 {
           strafe status               print accessibility / tap status
           strafe speed [preset]       show or set the swipe transition speed
           strafe hotkeys [on|off]     show or set keyboard shortcut enablement
+          strafe follow [on|off]      show or set finger-tracking swipes
+          strafe release [preset]     show or set the follow-finger release speed
 
         """.utf8))
         return 2
     }
+}
+
+/// `strafe <command> [preset]`: list a preset setting, or store a new choice.
+private func showOrSetPreset<Preset: StoredPreset>(_: Preset.Type, label: String, argument: String?) -> Int32 {
+    guard let argument else {
+        let current = Preset.stored
+        print("\(label): \(current.title)")
+        let width = Preset.allCases.map(\.name.count).max() ?? 0
+        for preset in Preset.allCases {
+            let mark = preset == current ? "*" : " "
+            let pad = String(repeating: " ", count: width - preset.name.count)
+            print("  \(mark) \(preset.name)\(pad)  \(preset.title)")
+        }
+        return 0
+    }
+    guard let preset = Preset(name: argument) else {
+        let names = Preset.allCases.map(\.name).joined(separator: "|")
+        FileHandle.standardError.write(Data(
+            "unknown speed '\(argument)' (expected \(names))\n".utf8))
+        return 2
+    }
+    preset.persist()
+    print("\(label): \(preset.title)")
+    return 0
+}
+
+/// `strafe <command> [on|off]`: print an on/off setting, or store a new value.
+private func showOrSetToggle(label: String, argument: String?,
+                             current: () -> Bool, persist: (Bool) -> Void) -> Int32 {
+    guard let argument else {
+        print("\(label): \(current() ? "on" : "off")")
+        return 0
+    }
+    guard argument == "on" || argument == "off" else {
+        FileHandle.standardError.write(Data(
+            "unknown value '\(argument)' (expected on|off)\n".utf8))
+        return 2
+    }
+    persist(argument == "on")
+    print("\(label): \(argument)")
+    return 0
 }
 
 // MARK: - Menu-bar app mode

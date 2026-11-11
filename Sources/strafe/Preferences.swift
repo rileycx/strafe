@@ -35,3 +35,34 @@ enum Preferences {
         return UserDefaults(suiteName: domain) ?? .standard
     }()
 }
+
+/// A setting that is one of a fixed list of presets, stored as its raw value.
+/// The menu, the settings window, and the CLI all read and write it through
+/// here, so they cannot drift apart on either the key or the fallback.
+protocol StoredPreset: CaseIterable, Equatable, RawRepresentable where RawValue == Int {
+    /// The one `UserDefaults` key this setting uses.
+    static var storageKey: String { get }
+    static var `default`: Self { get }
+    /// Shown in the menu and the settings window.
+    var title: String { get }
+    /// Stable identifier for the CLI.
+    var name: String { get }
+}
+
+extension StoredPreset {
+    init?(name: String) {
+        guard let match = Self.allCases.first(where: { $0.name == name }) else { return nil }
+        self = match
+    }
+
+    /// The persisted preset. An absent key (a fresh install) or a raw value
+    /// that is no longer a preset means `default`. `object(forKey:)` rather
+    /// than `integer(forKey:)` so "never set" is distinguishable from a stored 0.
+    static var stored: Self {
+        (Preferences.store.object(forKey: storageKey) as? Int).flatMap(Self.init(rawValue:)) ?? .default
+    }
+
+    func persist() {
+        Preferences.store.set(rawValue, forKey: Self.storageKey)
+    }
+}

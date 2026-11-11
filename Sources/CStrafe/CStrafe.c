@@ -317,6 +317,23 @@ void strafe_clear_swipe_motion(CGEventRef event) {
     CGEventSetDoubleValueField(event, kCGEventGestureSwipeVelocityY, 0);
 }
 
+// --- Follow-finger release (SPEC §2.6) ------------------------------------
+CGEventRef strafe_copy_with_release_velocity(CGEventRef event, double velocity) {
+    if (!event) { return NULL; }
+    CGEventRef copy = CGEventCreateCopy(event);
+    if (!copy) { return NULL; }
+    CGEventSetDoubleValueField(copy, kCGEventGestureSwipeVelocityX, velocity);
+    // On macOS 27 the Dock reads the velocity in the event's IOHID payload
+    // instead, which carries direction in the Natural-scrolling orientation,
+    // as posted events do.
+    CGEventRef patched = strafe_create_event_with_payload_velocity(
+        copy, strafe_posted_sign_reversed() ? -velocity : velocity);
+    // No payload (before macOS 27): the field above is what the Dock reads.
+    if (!patched) { return copy; }
+    CFRelease(copy);
+    return patched;
+}
+
 // --- Constants (SPEC §1.3) ------------------------------------------------
 int64_t strafe_cgs_event_dock_control(void)    { return kCGSEventDockControl; }
 int64_t strafe_cgs_event_gesture(void)         { return kCGSEventGesture; }

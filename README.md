@@ -62,7 +62,7 @@ except the one click macOS reserves for you:
 Set up strafe (https://github.com/rileycx/strafe), a macOS utility that makes
 Space switching instant. Steps:
 
-1. Clone the repo and read SECURITY.md, then skim the source (~1,486 lines,
+1. Clone the repo and read SECURITY.md, then skim the source (~2,870 lines,
    no dependencies) and confirm the claims hold: the event tap mask covers
    only gesture events, and there is no network, subprocess, or file-write
    code. Tell me what you found before proceeding.
@@ -122,7 +122,7 @@ are content-based. Every rebuild looks like a *different* app to macOS, so
 after you update you will have to re-grant Accessibility and delete the stale
 entry from the list.
 
-The app is about 1,486 lines of Swift and C with no third-party dependencies —
+The app is about 2,870 lines of Swift and C with no third-party dependencies —
 `swift build` finishes in seconds and you can read the whole thing. See
 [SECURITY.md](SECURITY.md).
 
@@ -156,14 +156,15 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   registration conflicts are reported without replacing the previous binding.
   **Space-switch hotkeys**, `strafe hotkeys off`, and `strafe hotkeys on` toggle
   shortcuts independently of swipe interception.
-- **Settings…** — configure keyboard shortcuts and transition speed in a native
-  window. Command-comma opens settings while strafe is active.
+- **Settings…** — configure keyboard shortcuts, transition speed, and
+  follow-finger swiping in a native window. Command-comma opens settings while strafe is active.
 - **Menu bar** — click the strafe icon to enable/disable interception, check
   whether swipe interception is actually active, and see which version you're running
   and where to get a newer one.
 - **Transition speed** *(Settings › Space transitions, or menu bar › Transition speed)*
-  — applies to both trackpad swipes and keyboard shortcuts. If instant is too
-  abrupt, you can trade some of it back for animation:
+  — applies to keyboard shortcuts, and to trackpad swipes unless Follow finger
+  is on. If instant is too abrupt, you can trade some of it back for animation,
+  or turn on Follow finger (below) to keep the native finger-tracking slide:
 
   | preset | measured | what it is |
   | --- | --- | --- |
@@ -174,6 +175,20 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   Nothing slower is offered. The next step up measures ~170 ms, which is
   macOS's own animated switch — and that is already what you get with strafe
   turned off.
+
+- **Follow finger while swiping** *(menu bar, Settings › Trackpad gestures, or
+  `strafe follow on|off`)* — an alternative to the instant swipe. Your real
+  swipe passes through, so the Space slides under your fingers and you can drag
+  partway and go back. When you lift your fingers, strafe raises the release
+  velocity, so the slide keeps its momentum but settles much sooner and the
+  new Space takes input sooner. A short flick still switches; a slow drag
+  switches past halfway and otherwise snaps back. At the first or last Space,
+  macOS's own rubber-band is left alone. Off by default. Transition speed
+  still applies to keyboard shortcuts.
+
+  **Release speed** *(Settings › Trackpad gestures, menu bar, or
+  `strafe release [preset]`)* sets how quickly that slide settles: Gentle,
+  Smooth (the default), Quick, or Instant (no slide).
 
 - **Hide from menu bar** *(menu bar › Hide from menu bar)* — hide the strafe
   icon from the menu bar. The app keeps running: swipes and shortcuts still work.
@@ -187,6 +202,8 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   strafe status              # print accessibility / tap status
   strafe speed [preset]      # show or set transition speed
   strafe hotkeys [on|off]    # show or set Space-switch hotkeys
+  strafe follow [on|off]     # show or set finger-tracking swipes
+  strafe release [preset]    # show or set the follow-finger release speed
   strafe                     # start the menu-bar app
   ```
 
@@ -200,7 +217,7 @@ The tap sees only trackpad gesture and dock-control events. It does **not** see
 keystrokes: the event mask excludes key events entirely. The settings recorder
 receives key combinations only in strafe's focused window while recording.
 strafe has no network, telemetry, direct file access, or subprocess code. It saves your transition
-speed and hotkey preferences; AppKit also saves menu-bar icon visibility, which strafe resets
+speed, hotkey, and follow-finger preferences; AppKit also saves menu-bar icon visibility, which strafe resets
 on launch. See [SECURITY.md](SECURITY.md) for the exact file and line
 pointers.
 
@@ -225,8 +242,14 @@ strafe posts a synthetic one with an artificially near-zero *progress* and a
 very high *velocity*. The high velocity makes the WindowServer treat the gesture
 as a flick and skip the slide animation, jumping instantly to the neighboring
 Space. At the same time an active event tap suppresses your real swipe so the OS
-never runs its own animated version. For the field-by-field derivation, read
-[docs/SPEC.md](docs/SPEC.md).
+never runs its own animated version.
+
+With **Follow finger while swiping** on, strafe does the opposite: your real
+swipe passes through, so macOS animates it under your fingers, and only the
+release is replaced with a copy carrying a faster velocity toward the Space
+the slide should settle on. On macOS 27 that velocity lives in the event's
+embedded IOHID payload, so strafe rewrites it there. For the field-by-field
+derivation of both modes, read [docs/SPEC.md](docs/SPEC.md).
 
 ## Requirements
 

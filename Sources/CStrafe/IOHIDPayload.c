@@ -3,6 +3,7 @@
 #include "IOHIDPayload.h"
 #include <mach/mach_time.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -171,5 +172,108 @@ CGEventRef strafe_create_augmented_event(CGEventRef event) {
 
     CGEventRef result = CGEventCreateFromData(kCFAllocatorDefault, new_data);
     CFRelease(new_data);
+    return result;
+}
+
+// --- Follow-finger: rewrite a REAL event's payload velocity ---------------
+// A real macOS 27 dock-swipe event already carries a field-4205 record, and the
+// Dock reads velocity from it rather than from field 129. Find that record by
+// validating its layout, then replace (or add) its velocity child event.
+
+// No real payload comes close; this only bounds the walk over untrusted bytes.
+static const uint32_t kMaxPayloadEvents = 64;
+
+static uint32_t read_u32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
+static void write_u32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
+static size_t read_be16(const uint8_t *p) { return ((size_t)p[0] << 8) | p[1]; }
+
+// A validated field-4205 record. Offsets are from the start of the serialized
+// event, so they stay valid when a velocity child is inserted at `events_end`.
+typedef struct {
+    size_t payload;      // first payload byte, just past the 4-byte record header
+    size_t size;         // payload size, as stored in the record header
+    size_t events_end;   // just past the payload's last event
+    bool has_velocity;
+    size_t velocity;     // the velocity child event, when has_velocity
+} PayloadRecord;
+
+// Walk the flattened event list of the payload at `record->payload`, filling in
+// the rest of `record`. False unless every event fits and one is a fluid gesture.
+static bool parse_payload(const uint8_t *bytes, PayloadRecord *record) {
+    const uint8_t *p = bytes + record->payload;
+    size_t size = record->size;
+    if (size < sizeof(IOHIDSystemQueueElementHeader)) return false;
+    uint32_t attributes = read_u32(p + offsetof(IOHIDSystemQueueElementHeader, attribute_length));
+    uint32_t count = read_u32(p + offsetof(IOHIDSystemQueueElementHeader, event_count));
+    if (count == 0 || count > kMaxPayloadEvents || attributes > size) return false;
+    size_t pos = sizeof(IOHIDSystemQueueElementHeader) + attributes;
+    bool fluid = false;
+    for (uint32_t i = 0; i < count; i++) {
+        if (pos + sizeof(IOHIDEventBase) > size) return false;
+        uint32_t eventSize = read_u32(p + pos + offsetof(IOHIDEventBase, size));
+        uint32_t type = read_u32(p + pos + offsetof(IOHIDEventBase, type));
+        if (eventSize < sizeof(IOHIDEventBase) || pos + eventSize > size) return false;
+        if (type == kIOHIDEventTypeFluidTouchGesture) fluid = true;
+        if (type == kIOHIDEventTypeVelocity && !record->has_velocity
+            && eventSize >= sizeof(IOHIDVelocityEventData)) {
+            record->has_velocity = true;
+            record->velocity = record->payload + pos;
+        }
+        pos += eventSize;
+    }
+    record->events_end = record->payload + pos;
+    return fluid;
+}
+
+static bool find_payload_record(const uint8_t *bytes, size_t length, PayloadRecord *record) {
+    for (size_t off = 4; off + 4 <= length; off++) {
+        size_t size = read_be16(bytes + off);
+        if (read_be16(bytes + off + 2) != kCGEventRawIOHIDPayload || off + 4 + size > length) continue;
+        *record = (PayloadRecord){ .payload = off + 4, .size = size };
+        if (parse_payload(bytes, record)) return true;
+    }
+    return false;
+}
+
+// Overwrite the velocity child's x velocity, or append a child carrying it.
+// False if the record cannot grow to hold a new child.
+static bool set_payload_velocity(CFMutableDataRef data, const PayloadRecord *record, double velocity) {
+    int32_t fixed = double_to_fixed1616(velocity);
+    if (record->has_velocity) {
+        CFIndex at = (CFIndex)(record->velocity + offsetof(IOHIDVelocityEventData, velocity_x));
+        CFDataReplaceBytes(data, CFRangeMake(at, sizeof(fixed)), (const UInt8 *)&fixed, sizeof(fixed));
+        return true;
+    }
+    size_t grown = record->size + sizeof(IOHIDVelocityEventData);
+    if (grown > UINT16_MAX) return false;
+    IOHIDVelocityEventData child = {
+        .base = { .size = sizeof(child), .type = kIOHIDEventTypeVelocity, .depth = 1 },
+        .velocity_x = fixed,
+    };
+    CFDataReplaceBytes(data, CFRangeMake((CFIndex)record->events_end, 0),
+                       (const UInt8 *)&child, sizeof(child));
+    uint8_t *payload = CFDataGetMutableBytePtr(data) + record->payload;
+    uint8_t *count = payload + offsetof(IOHIDSystemQueueElementHeader, event_count);
+    write_u32(count, read_u32(count) + 1);
+    payload[-4] = (uint8_t)(grown >> 8);
+    payload[-3] = (uint8_t)grown;
+    return true;
+}
+
+CGEventRef strafe_create_event_with_payload_velocity(CGEventRef event, double velocity) {
+    if (!event) return NULL;
+    CFDataRef data = CGEventCreateData(kCFAllocatorDefault, event);
+    if (!data) return NULL;
+    CFMutableDataRef patched = CFDataCreateMutableCopy(kCFAllocatorDefault, 0, data);
+    CFRelease(data);
+    if (!patched) return NULL;
+
+    CGEventRef result = NULL;
+    PayloadRecord record;
+    if (find_payload_record(CFDataGetBytePtr(patched), (size_t)CFDataGetLength(patched), &record)
+        && set_payload_velocity(patched, &record, velocity)) {
+        result = CGEventCreateFromData(kCFAllocatorDefault, patched);
+    }
+    CFRelease(patched);
     return result;
 }

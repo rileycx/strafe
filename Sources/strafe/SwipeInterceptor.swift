@@ -41,13 +41,23 @@ final class SwipeInterceptor: @unchecked Sendable {
     private var swipeFired = false
     private var swipePosted = false
 
+    // Follow-finger mode (SPEC §2.6). Main-run-loop confined.
+    private let releaseSpeed: () -> ReleaseSpeed?
+    private let neighborExists: (_ right: Bool) -> Bool
+    /// The real swipe being followed, or nil in the default (instant) mode.
+    private var followed: FollowedSwipe?
+
     init(engine: SwitchEngine,
          isExposeActive: @escaping () -> Bool = { strafe_is_expose_active() },
          accessibilityGranted: @escaping () -> Bool = { Permissions.isAccessibilityGranted },
+         releaseSpeed: @escaping () -> ReleaseSpeed? = { FollowFinger.activeReleaseSpeed },
+         neighborExists: @escaping (_ right: Bool) -> Bool = FollowFinger.liveNeighborExists,
          makeTap: @escaping (CGEventTapCallBack, UnsafeMutableRawPointer) -> (any SwipeEventTap)? = SystemSwipeEventTap.make) {
         self.engine = engine
         self.isExposeActive = isExposeActive
         self.accessibilityGranted = accessibilityGranted
+        self.releaseSpeed = releaseSpeed
+        self.neighborExists = neighborExists
         self.makeTap = makeTap
     }
 
@@ -143,6 +153,7 @@ final class SwipeInterceptor: @unchecked Sendable {
         swipeTracking = false
         swipeFired = false
         swipePosted = false
+        followed = nil
     }
 
     // MARK: - Callback (runs on the main run loop)
@@ -206,14 +217,26 @@ final class SwipeInterceptor: @unchecked Sendable {
         let phase = strafe_event_gesture_phase(event)
 
         if phase == strafe_gesture_phase_began() {
+            followed = nil
             // Let real gestures through while an overlay (Exposé) is up (SPEC §2.5).
             if isExposeActive() { return passthrough }
+            if let speed = releaseSpeed() {
+                // Follow-finger: let the real swipe drive the native slide. Drop
+                // any instant-mode swipe whose end never arrived, so it cannot
+                // go on suppressing this one's companion events.
+                resetGesture()
+                followed = FollowedSwipe(speed: speed)
+                return passthrough
+            }
             swipeTracking = true
             swipeFired = false
             swipePosted = false
             return nil  // SUPPRESS the real 'began'
+        }
 
-        } else if phase == strafe_gesture_phase_changed() {
+        if followed != nil { return handleFollowed(phase: phase, event: event) }
+
+        if phase == strafe_gesture_phase_changed() {
             guard swipeTracking else { return passthrough }
             if !swipeFired {
                 let progress = strafe_event_swipe_progress(event)
@@ -266,6 +289,32 @@ final class SwipeInterceptor: @unchecked Sendable {
         } else {
             // Any other phase (mayBegin/none): suppress only while tracking.
             return swipeTracking ? nil : passthrough
+        }
+    }
+
+    /// Follow-finger mode (SPEC §2.6): every event passes through, and only the
+    /// release is replaced, by a copy with a faster velocity.
+    private func handleFollowed(phase: Int64, event: CGEvent) -> Unmanaged<CGEvent>? {
+        let passthrough = Unmanaged.passUnretained(event)
+        let progress = strafe_event_swipe_progress(event)
+        let velocity = strafe_event_swipe_velocity_x(event)
+        switch phase {
+        case strafe_gesture_phase_changed():
+            followed?.track(progress: progress, velocity: velocity)
+            return passthrough
+        case strafe_gesture_phase_ended():
+            defer { followed = nil }
+            guard let release = followed?.releaseVelocity(progress: progress, velocity: velocity,
+                                                          neighborExists: neighborExists),
+                  let replacement = strafe_copy_with_release_velocity(event, release)
+            else { return passthrough }
+            // The event system releases a replacement event, so hand it over at +1.
+            return Unmanaged.passRetained(replacement)
+        case strafe_gesture_phase_cancelled():
+            followed = nil
+            return passthrough
+        default:
+            return passthrough
         }
     }
 

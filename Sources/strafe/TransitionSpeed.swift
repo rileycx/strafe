@@ -33,7 +33,7 @@ import CStrafe
 /// measures 171 ms, which is macOS's own animated switch — and "be exactly as
 /// slow as the thing strafe replaces" is not a setting worth offering. Anyone
 /// who wants that can turn strafe off.
-enum TransitionSpeed: Int, CaseIterable {
+enum TransitionSpeed: Int, StoredPreset {
     /// The original behaviour: a zero-progress high-velocity flick. No slide.
     case instant = 0
     case quick   = 1
@@ -64,12 +64,6 @@ enum TransitionSpeed: Int, CaseIterable {
         }
     }
 
-    init?(name: String) {
-        guard let match = TransitionSpeed.allCases.first(where: { $0.name == name })
-        else { return nil }
-        self = match
-    }
-
     /// Ramp duration in milliseconds, or `nil` for the instant flick.
     var rampMilliseconds: Double? {
         switch self {
@@ -95,24 +89,5 @@ enum TransitionSpeed: Int, CaseIterable {
         TransitionSpeed(rawValue: rawValue) ?? .default
     }
 
-    // MARK: - Persistence
-
-    /// The one `UserDefaults` key this setting uses. Kept here so the menu-bar
-    /// app and the CLI cannot drift apart on either the key or the fallback.
     static let storageKey = "transitionSpeed"
-
-    /// The persisted preset. An absent key — a fresh install — means `default`,
-    /// so strafe's out-of-the-box behaviour is unchanged by this feature.
-    /// `object(forKey:)` rather than `integer(forKey:)` so "never set" is
-    /// distinguishable from a stored 0.
-    static var stored: TransitionSpeed {
-        guard let raw = Preferences.store.object(forKey: storageKey) as? Int else {
-            return .default
-        }
-        return from(rawValue: raw)
-    }
-
-    func persist() {
-        Preferences.store.set(rawValue, forKey: TransitionSpeed.storageKey)
-    }
 }

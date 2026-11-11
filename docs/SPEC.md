@@ -340,6 +340,39 @@ While overlays are up, real swipes should pass through. ISS detects them by scan
 Detection is gated by `iss_set_overlay_detection_enabled(bool)` (default ON, see §5);
 in `began`, if `iss_is_expose_active()` the real gesture is passed through untouched.
 
+### 2.6 Follow-finger mode (strafe addition, not in ISS)
+An opt-in alternative to §2.3 (`FollowFinger.swift`, `SwipeInterceptor.handleFollowed`).
+Nothing is suppressed: the real `began`/`changed` stream drives the Dock's native,
+finger-tracking slide, so a swipe can be dragged partway and back. Only the real
+`ended` is replaced, by a copy whose release velocity points at the Space the slide
+should settle on, with a magnitude from the **Release speed** preset. The Dock's
+settle animation after release is what queues input after a native swipe, and a
+faster release shortens it.
+
+- **Settle direction** (`FollowFinger.settleDirection`): a release with |velocity|
+  ≥ 0.5 settles the way it was moving (a flick, including a flick back); a slower
+  one switches when |progress| ≥ 0.5 and otherwise snaps back. Measured on real
+  swipes (macOS 27.0): flick releases carry |velocity| ≈ 2–8, a held finger ≈ 0–0.3.
+  If the `ended` itself reports zero progress or velocity, the last `changed` values
+  are used.
+- **Edges:** a release that would settle on a Space that does not exist is left
+  untouched, so the Dock runs its own rubber-band.
+- **Release velocity:** real releases are ≈ 2–8. The presets (10 / 20 / 40) stay
+  below the ~80 cliff where a flick stops animating (§1.4); 2000 jumps outright.
+- **macOS 27 payload:** the Dock reads a real event's velocity from its embedded
+  IOHID payload (field 4205), not from field 129. Rewriting field 129 alone was
+  measured to have no effect. `strafe_copy_with_release_velocity` therefore copies
+  the event and has `strafe_create_event_with_payload_velocity` (`IOHIDPayload.c`)
+  find and validate the existing payload record and replace (or add) its velocity
+  child. Like posted events (`strafe_posted_sign_reversed`), the
+  payload carries direction in the Natural-scrolling orientation: with Natural
+  scrolling on, every measured real payload had the opposite sign to fields
+  124/129. Before macOS 27 there is no payload and field 129 is what the Dock reads.
+- **Rejected alternative:** suppressing the real `ended` and posting a synthetic one
+  leaves the Dock's native gesture open. In testing about one later swipe in four
+  was then cancelled (phase 8) and stopped between Spaces; with the real `ended`
+  passed through, cancels were back to the trackpad's normal rate.
+
 ---
 
 ## 3. macOS 26 (Tahoe) specifics

@@ -5,7 +5,8 @@ tap. That is a lot of trust to ask for, so this document states exactly what
 strafe can and cannot do, and how to verify every claim yourself. Every claim
 below points at a file and line you can read or a command you can run.
 
-The whole program is about **1,486 lines** of Swift + C (`wc -l Sources/**`).
+The whole program is about **2,870 lines** of Swift + C
+(`cat Sources/strafe/*.swift Sources/CStrafe/*.[ch] Sources/CStrafe/include/*.h | wc -l`).
 You can build it from source in about 30 seconds (`swift build`) and audit it
 in an afternoon.
 
@@ -28,7 +29,7 @@ do so. The tap's event mask is defined in exactly one place, and it covers
 **only gesture and dock-control events** — not keystrokes.
 
 - **Tap mask definition:** `Sources/CStrafe/CStrafe.c`, function
-  `strafe_tap_event_mask()` (line 289):
+  `strafe_tap_event_mask()` (line 383):
 
   ```c
   uint64_t strafe_tap_event_mask(void) {
@@ -42,7 +43,7 @@ do so. The tap's event mask is defined in exactly one place, and it covers
 
 - **Why keys are excluded — determination comment:** immediately above that
   function in `Sources/CStrafe/CStrafe.c` (the `KEY-EVENTS-IN-MASK
-  DETERMINATION` block, lines 267–288) documents that an earlier revision
+  DETERMINATION` block, lines 361–382) documents that an earlier revision
   masked key events, that they were never acted on, and that they were
   removed. The tap now wakes only on real space-swipe gestures.
 
@@ -60,7 +61,7 @@ do so. The tap's event mask is defined in exactly one place, and it covers
 
 **The system-wide gesture tap cannot observe what you type.**
 A key event fails the `cgsType == dockControl || cgsType == gesture` guard
-(`SwipeInterceptor.handle`, line 144) and is passed straight through, but in
+(`SwipeInterceptor.handle`, line 191) and is passed straight through, but in
 practice a key event is never even delivered to the callback because it is not
 in the tap's mask. The settings shortcut recorder receives key events only
 while recording in strafe's own focused window. It saves the chosen key code
@@ -70,7 +71,7 @@ monitor or additional event tap.
 ### Exactly what event data strafe touches
 
 For the gesture events it does see, strafe reads a small fixed set of fields via
-the wrappers in `Sources/CStrafe/CStrafe.c` (lines 221–242):
+the wrappers in `Sources/CStrafe/CStrafe.c` (lines 284–305):
 
 - CGS event type (field 55) — `strafe_event_cgs_type`
 - IOHID gesture type (field 110) — `strafe_event_hid_type`
@@ -94,12 +95,24 @@ through with its motion cleared after a replacement switch so the Dock can
 finish its gesture state. At the first or last Space, strafe suppresses the
 entire blocked swipe, including its terminal event, to prevent a bounce-back.
 
+With **Follow finger while swiping** on (off by default), strafe suppresses
+nothing: every event of the real swipe passes through, and only its terminal
+`ended` event is replaced by a copy with a different release velocity
+(`strafe_copy_with_release_velocity`, `Sources/CStrafe/CStrafe.c`). On
+macOS 27 and later that copy is made by serializing the real event in memory,
+locating its existing IOHID payload (field 4205), and rewriting the velocity in
+it (`strafe_create_event_with_payload_velocity`,
+`Sources/CStrafe/IOHIDPayload.c`). The payload is validated, edited, and discarded within that one call; it
+is never stored or transmitted, and nothing else in it is read or changed. To
+choose the direction, strafe uses the same progress and velocity fields listed
+above, plus the current Space count and index from the topology query below.
+
 Beyond the swipe event itself, strafe also calls `CGWindowListCopyWindowInfo`
 (reading window owner names and layer numbers, to detect whether Exposé/Mission
 Control is open so it can pass real swipes through — `strafe_is_expose_active`,
-`Sources/CStrafe/CStrafe.c` line 295) and reads the current cursor location to
+`Sources/CStrafe/CStrafe.c` line 389) and reads the current cursor location to
 pick which display to switch on (`copy_cursor_display_identifier`, same file
-line 112). Neither the window list nor the cursor position is stored or
+line 175). Neither the window list nor the cursor position is stored or
 transmitted; both are read, used for that one decision, and discarded.
 
 On macOS 27 and later, strafe also reads one system preference when it posts a
@@ -131,7 +144,7 @@ Each of these is verifiable with a single grep over `Sources/`.
 - **No third-party dependencies.** `Package.swift` declares no `dependencies`
   and no `.package(...)` entries — only Apple system frameworks
   (`ApplicationServices`, `CoreFoundation`, `CoreGraphics`, `IOKit`). Read the
-  35-line `Package.swift` in full.
+  40-line `Package.swift` in full.
 
 - **No analytics or telemetry.** strafe writes only to the process's own
   `stderr` (`grep -rn FileHandle.standardError Sources/`) and `stdout` (the
@@ -148,7 +161,7 @@ Each of these is verifiable with a single grep over `Sources/`.
 
 - **No dynamic loading.** strafe does not `dlopen`/`dlsym` anything. The private
   CGS symbols it uses are weak-imported at link time and guarded by an address
-  check (`strafe_cgs_available`, `CStrafe.c` line 57):
+  check (`strafe_cgs_available`, `CStrafe.c` line 61):
 
   ```
   grep -rniE 'dlopen|dlsym' Sources/    # zero hits
@@ -166,10 +179,12 @@ Each of these is verifiable with a single grep over `Sources/`.
 
 - **Persistence is limited to settings.** strafe stores no databases and no
   caches. Its `UserDefaults` values include `transitionSpeed` (the selected
-  transition preset), `spaceHotkeysEnabled` (the keyboard-shortcut toggle), and
+  transition preset), `spaceHotkeysEnabled` (the keyboard-shortcut toggle),
   `spaceShortcut.left` / `spaceShortcut.right` (a key code and modifier flags,
-  or a cleared shortcut). See `TransitionSpeed.swift`, `HotkeyManager.swift`,
-  and `KeyboardShortcut.swift`. These never widen the gesture tap's mask.
+  or a cleared shortcut), and `followFinger` / `releaseSpeed` (the follow-finger
+  toggle and its preset). See `TransitionSpeed.swift`, `HotkeyManager.swift`,
+  `KeyboardShortcut.swift`, and `FollowFinger.swift`; the presets are read and
+  written by `StoredPreset` in `Preferences.swift`. These never widen the gesture tap's mask.
   Keyboard shortcuts use Carbon `RegisterEventHotKey`, a separate mechanism
   that delivers only registered shortcut activations.
 
@@ -211,7 +226,9 @@ space swipe, suppress the slow animated version, and post a faster synthetic
 dock swipe in its place — that requires an active tap, which requires
 Accessibility. (How much faster is the **Transition speed** setting; at every
 preset it is the same event family, posted to the same tap, and it changes
-nothing about what strafe can see.) See `Sources/strafe/Permissions.swift` for
+nothing about what strafe can see. **Follow finger while swiping** uses the
+same active tap to replace the real swipe's release event with a faster copy;
+it widens neither the mask nor what strafe reads.) See `Sources/strafe/Permissions.swift` for
 the trust check (`AXIsProcessTrusted` / `AXIsProcessTrustedWithOptions`), which
 is the only permission strafe requests.
 
