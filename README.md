@@ -165,7 +165,7 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   — applies to both trackpad swipes and keyboard shortcuts. If instant is too
   abrupt, you can trade some of it back for animation:
 
-  | preset | measured | what it is |
+  | preset | approx. switch time | what it is |
   | --- | --- | --- |
   | Instant | ~40 ms | the default: no slide at all |
   | Quick | ~80 ms | a hint of motion |
@@ -176,9 +176,10 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   from the CLI, run `strafe speed 150`, `strafe speed 200`, `strafe speed 250`,
   or `strafe speed 300`.
 
-  These presets play a timed animation; the desktop does not follow your
-  fingers. For the native trackpad feel, choose **Disable** in the menu bar.
-  Trackpad swipes then go straight to macOS, and strafe shortcuts still work.
+  Animated presets drive the full slide before ending the gesture, but the
+  slide is timed and does not follow your fingers. For the native trackpad
+  feel, choose **Disable** in the menu bar. macOS then handles trackpad swipes,
+  and strafe shortcuts still work.
 
 - **Hide from menu bar** *(menu bar › Hide from menu bar)* — hide the strafe
   icon from the menu bar. The app keeps running: swipes and shortcuts still work.

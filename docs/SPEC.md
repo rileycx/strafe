@@ -133,6 +133,8 @@ typedef CF_ENUM(uint16_t, CGGestureMotion) {            // written into field 12
 > macOS's own animated switch. strafe's **Transition speed** setting is
 > therefore a ramp duration, not a velocity
 > (`Sources/strafe/TransitionSpeed.swift`).
+> The benchmark used a peak of 0.35; the app ramps to full travel (1.0)
+> before `ended` so it doesn't leave most of the slide to macOS.
 
 ### 1.5 The exact synthesis: one event builder, three-phase sequence
 Each phase is one `CGEventCreate(NULL)` event with all seven fields set, posted to

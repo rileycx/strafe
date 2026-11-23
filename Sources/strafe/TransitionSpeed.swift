@@ -44,8 +44,7 @@ enum TransitionSpeed: Int, CaseIterable {
     // keep falling through `from(rawValue:)` to `.default` rather than silently
     // becoming some unrelated preset.
 
-    /// Menu title with measured timings for the original presets and estimates
-    /// for the numeric presets.
+    /// Menu title with approximate switch timings based on the benchmark above.
     var title: String {
         switch self {
         case .instant:   return "Instant (~40 ms)"
@@ -85,12 +84,12 @@ enum TransitionSpeed: Int, CaseIterable {
         }
     }
 
-    /// Ramp shape constants, held fixed across the presets so duration is the
-    /// only variable. These are the values `bench` validated as producing the
-    /// OS's standard slide; peak progress well under 1.0 is enough because the
-    /// end velocity is what commits the switch.
+    /// The short presets keep at least eight updates; longer ramps sample
+    /// more often rather than spreading those same updates farther apart.
     static let rampSteps = 8
-    static let rampPeakProgress: Double = 0.35
+    /// Drive the whole slide before ending the gesture. The benchmark's 0.35
+    /// peak left the remaining travel to the system's release animation.
+    static let rampPeakProgress: Double = 1.0
     /// Moderate end velocity (order 100–400). Large enough for the WindowServer
     /// to complete the switch, small enough that it animates rather than flicks.
     static let rampEndVelocity: Double = 130.0
