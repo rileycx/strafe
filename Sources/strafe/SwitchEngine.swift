@@ -67,10 +67,9 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
 
     /// Serial queue for the ramped (animated) transition speeds.
     ///
-    /// A ramp is a sequence of posts spread over 30–120 ms, and `switchSpace` is
-    /// called from the event-tap callback, which runs on the **main run loop** —
-    /// sleeping there would stall the tap and every other main-thread client for
-    /// the length of the animation. So ramps are posted off-thread.
+    /// Ramps spread their posts over time. `switchSpace` is called from the
+    /// event-tap callback on the **main run loop**, so sleeping there would
+    /// stall the tap and every other main-thread client during the animation.
     ///
     /// Serial, not concurrent, and deliberately so: two swipes in quick
     /// succession must not interleave their began/changed/ended streams. The

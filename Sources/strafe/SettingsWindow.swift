@@ -129,7 +129,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let transitions = NSTextField(labelWithString: "Space transitions")
         transitions.font = .systemFont(ofSize: 16, weight: .semibold)
         stack.addArrangedSubview(transitions)
-        speed.addItems(withTitles: TransitionSpeed.allCases.map(\.title))
+        for preset in TransitionSpeed.allCases {
+            speed.addItem(withTitle: preset.title)
+            speed.lastItem?.tag = preset.rawValue
+        }
         speed.target = self
         speed.action = #selector(changeSpeed)
         speed.isEnabled = engine != nil
@@ -164,7 +167,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             recorder.title = recorder.recording ? "Type shortcut… (Esc cancels)" : (action.storedShortcut?.displayName ?? "Record Shortcut…")
         }
         if let error = hotkeys.registrationError { message.stringValue = error }
-        speed.selectItem(at: (engine?.transitionSpeed ?? TransitionSpeed.stored).rawValue)
+        speed.selectItem(withTag: (engine?.transitionSpeed ?? TransitionSpeed.stored).rawValue)
         refreshSwipeStatus()
     }
 
@@ -226,7 +229,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func changeSpeed() {
-        let selected = TransitionSpeed.from(rawValue: speed.indexOfSelectedItem)
+        guard let tag = speed.selectedItem?.tag else { return }
+        let selected = TransitionSpeed.from(rawValue: tag)
         selected.persist()
         engine?.setTransitionSpeed(selected)
     }

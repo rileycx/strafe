@@ -171,9 +171,10 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   | Quick | ~80 ms | a hint of motion |
   | Smooth | ~110 ms | a visible but short slide |
 
-  Nothing slower is offered. The next step up measures ~170 ms, which is
-  macOS's own animated switch — and that is already what you get with strafe
-  turned off.
+  For more animation, choose **~150 ms**, **~200 ms**, **~250 ms**, or
+  **~300 ms**. These are estimates; actual switch times vary. To select one
+  from the CLI, run `strafe speed 150`, `strafe speed 200`, `strafe speed 250`,
+  or `strafe speed 300`.
 
 - **Hide from menu bar** *(menu bar › Hide from menu bar)* — hide the strafe
   icon from the menu bar. The app keeps running: swipes and shortcuts still work.
