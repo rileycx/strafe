@@ -34,7 +34,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var recorders: [ShortcutAction: ShortcutRecorder] = [:]
     private var recordingAction: ShortcutAction?
     private let enableShortcuts = NSButton(checkboxWithTitle: "Enable keyboard shortcuts", target: nil, action: nil)
-    private let speed = NSPopUpButton(frame: .zero, pullsDown: false)
+    private static let speedPresets = TransitionSpeed.allCases
+    private let speed = NSSlider()
+    private let speedValue = NSTextField(labelWithString: "")
+    private let dragToSwitch = NSButton(checkboxWithTitle: "Drag to switch Spaces", target: nil, action: nil)
+    private let flickSensitivity = NSSlider(
+        value: Double(SwipeInterceptor.defaultFlickSensitivity),
+        minValue: Double(SwipeInterceptor.flickSensitivityRange.lowerBound),
+        maxValue: Double(SwipeInterceptor.flickSensitivityRange.upperBound),
+        target: nil, action: nil)
+    private let flickSensitivityValue = NSTextField(labelWithString: "")
     private let message = NSTextField(wrappingLabelWithString: "")
     private let swipeStatus = NSTextField(wrappingLabelWithString: "")
     private var statusTimer: Timer?
@@ -129,13 +138,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let transitions = NSTextField(labelWithString: "Space transitions")
         transitions.font = .systemFont(ofSize: 16, weight: .semibold)
         stack.addArrangedSubview(transitions)
-        speed.addItems(withTitles: TransitionSpeed.allCases.map(\.title))
         speed.target = self
         speed.action = #selector(changeSpeed)
         speed.isEnabled = engine != nil
         speed.setAccessibilityLabel("Transition speed for swipes and keyboard shortcuts")
-        stack.addArrangedSubview(NSStackView(views: [NSTextField(labelWithString: "Transition speed"), speed]))
-        let speedHelp = NSTextField(wrappingLabelWithString: "Applies to both trackpad swipes and keyboard shortcuts.")
+        speed.minValue = 0
+        speed.maxValue = Double(Self.speedPresets.count - 1)
+        speed.numberOfTickMarks = Self.speedPresets.count
+        speed.allowsTickMarkValuesOnly = true
+        speedValue.alignment = .right
+        speedValue.widthAnchor.constraint(equalToConstant: 130).isActive = true
+        let speedRow = NSStackView(views: [NSTextField(labelWithString: "Transition speed"), speed, speedValue])
+        speedRow.spacing = 8
+        stack.addArrangedSubview(speedRow)
+        speedRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let speedHelp = NSTextField(wrappingLabelWithString: "Applies to shortcuts, swipes, and the end of a drag.")
         speedHelp.font = .systemFont(ofSize: 12)
         speedHelp.textColor = .secondaryLabelColor
         stack.addArrangedSubview(speedHelp)
@@ -148,6 +165,25 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let gestures = NSTextField(labelWithString: "Trackpad gestures")
         gestures.font = .systemFont(ofSize: 16, weight: .semibold)
         stack.addArrangedSubview(gestures)
+        dragToSwitch.target = self
+        dragToSwitch.action = #selector(toggleDragToSwitch)
+        stack.addArrangedSubview(dragToSwitch)
+        let dragHelp = NSTextField(wrappingLabelWithString: "Hold to preview. Release at or past halfway, or flick to switch.")
+        dragHelp.font = .systemFont(ofSize: 12)
+        dragHelp.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(dragHelp)
+        dragHelp.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let flickLabel = NSTextField(labelWithString: "Flick sensitivity")
+        flickSensitivity.target = self
+        flickSensitivity.action = #selector(changeFlickSensitivity)
+        flickSensitivity.setAccessibilityLabel(flickLabel.stringValue)
+        flickSensitivity.toolTip = "Higher values make lighter flicks switch Spaces."
+        flickSensitivityValue.alignment = .right
+        flickSensitivityValue.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        let flickRow = NSStackView(views: [flickLabel, flickSensitivity, flickSensitivityValue])
+        flickRow.spacing = 8
+        stack.addArrangedSubview(flickRow)
+        flickRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         swipeStatus.font = .systemFont(ofSize: 12)
         swipeStatus.textColor = .secondaryLabelColor
         stack.addArrangedSubview(swipeStatus)
@@ -158,14 +194,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func refresh() {
         enableShortcuts.state = HotkeyManager.enabled ? .on : .off
+        dragToSwitch.state = interceptor.dragToSwitch ? .on : .off
+        refreshFlickSensitivity()
         for action in ShortcutAction.allCases {
             let recorder = recorders[action]!
             recorder.recording = recordingAction == action
             recorder.title = recorder.recording ? "Type shortcut… (Esc cancels)" : (action.storedShortcut?.displayName ?? "Record Shortcut…")
         }
         if let error = hotkeys.registrationError { message.stringValue = error }
-        speed.selectItem(at: (engine?.transitionSpeed ?? TransitionSpeed.stored).rawValue)
+        let selected = engine?.transitionSpeed ?? TransitionSpeed.stored
+        speed.integerValue = Self.speedPresets.firstIndex(of: selected) ?? 0
+        speedValue.stringValue = selected.title
         refreshSwipeStatus()
+    }
+
+    private func refreshFlickSensitivity() {
+        flickSensitivity.isEnabled = interceptor.dragToSwitch
+        flickSensitivity.integerValue = interceptor.flickSensitivity
+        flickSensitivityValue.stringValue = "\(interceptor.flickSensitivity)%"
     }
 
     private func refreshSwipeStatus() {
@@ -225,10 +271,22 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         refresh()
     }
 
+    @objc private func toggleDragToSwitch() {
+        interceptor.setDragToSwitch(dragToSwitch.state == .on)
+        refreshFlickSensitivity()
+    }
+
+    @objc private func changeFlickSensitivity() {
+        interceptor.setFlickSensitivity(flickSensitivity.integerValue)
+        refreshFlickSensitivity()
+    }
+
     @objc private func changeSpeed() {
-        let selected = TransitionSpeed.from(rawValue: speed.indexOfSelectedItem)
+        let selected = Self.speedPresets[speed.integerValue]
+        speedValue.stringValue = selected.title
+        guard let engine, engine.transitionSpeed != selected else { return }
         selected.persist()
-        engine?.setTransitionSpeed(selected)
+        engine.setTransitionSpeed(selected)
     }
 
     func windowDidResignKey(_ notification: Notification) { cancelRecording() }

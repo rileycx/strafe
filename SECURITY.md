@@ -166,10 +166,10 @@ Each of these is verifiable with a single grep over `Sources/`.
 
 - **Persistence is limited to settings.** strafe stores no databases and no
   caches. Its `UserDefaults` values include `transitionSpeed` (the selected
-  transition preset), `spaceHotkeysEnabled` (the keyboard-shortcut toggle), and
-  `spaceShortcut.left` / `spaceShortcut.right` (a key code and modifier flags,
-  or a cleared shortcut). See `TransitionSpeed.swift`, `HotkeyManager.swift`,
-  and `KeyboardShortcut.swift`. These never widen the gesture tap's mask.
+  preset), `dragToSwitch` (the trackpad drag toggle), `flickSensitivity`
+  (the flick sensitivity percentage), `spaceHotkeysEnabled` (the shortcut
+  toggle), and `spaceShortcut.left` / `spaceShortcut.right` (a key code and
+  modifiers, or a cleared shortcut). These never widen the gesture tap's mask.
   Keyboard shortcuts use Carbon `RegisterEventHotKey`, a separate mechanism
   that delivers only registered shortcut activations.
 

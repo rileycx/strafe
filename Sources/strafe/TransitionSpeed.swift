@@ -28,29 +28,29 @@ import CStrafe
 /// The velocity axis is neither monotonic-in-a-useful-way nor reliable at the
 /// slow end; the ramp axis is evenly spaced and switched 6/6 at every duration.
 /// So the presets below are ramp durations.
-///
-/// The ramp deliberately stops at 60 ms (`smooth`). The 120 ms row above
-/// measures 171 ms, which is macOS's own animated switch — and "be exactly as
-/// slow as the thing strafe replaces" is not a setting worth offering. Anyone
-/// who wants that can turn strafe off.
 enum TransitionSpeed: Int, CaseIterable {
     /// The original behaviour: a zero-progress high-velocity flick. No slide.
     case instant = 0
     case quick   = 1
     case smooth  = 2
+    // Numeric presets use the approximate switch latency as their identifier.
+    case ms150 = 150
+    case ms200 = 200
+    case ms250 = 250
+    case ms300 = 300
 
     // rawValue 3 was `fullSlide`, a 120 ms ramp ≈ macOS's native speed. Retired
     // as a choice. Do NOT reuse 3: a stored 3 written by an older build has to
     // keep falling through `from(rawValue:)` to `.default` rather than silently
     // becoming some unrelated preset.
 
-    /// Menu title. Carries the measured cost so the choice is an informed one
-    /// rather than four adjectives.
+    /// Menu title with approximate switch timings based on the benchmark above.
     var title: String {
         switch self {
         case .instant:   return "Instant (~40 ms)"
         case .quick:     return "Quick (~80 ms)"
         case .smooth:    return "Smooth (~110 ms)"
+        case .ms150, .ms200, .ms250, .ms300: return "~\(name) ms"
         }
     }
 
@@ -61,6 +61,7 @@ enum TransitionSpeed: Int, CaseIterable {
         case .instant:   return "instant"
         case .quick:     return "quick"
         case .smooth:    return "smooth"
+        case .ms150, .ms200, .ms250, .ms300: return String(rawValue)
         }
     }
 
@@ -76,18 +77,16 @@ enum TransitionSpeed: Int, CaseIterable {
         case .instant:   return nil
         case .quick:     return 30
         case .smooth:    return 60
+        case .ms150, .ms200, .ms250, .ms300:
+            // The measured switches above report the new Space roughly 50 ms
+            // after the ramp. Budget that separately from the ramp itself.
+            return Double(rawValue - 50)
         }
     }
 
-    /// Ramp shape constants, held fixed across the presets so duration is the
-    /// only variable. These are the values `bench` validated as producing the
-    /// OS's standard slide; peak progress well under 1.0 is enough because the
-    /// end velocity is what commits the switch.
+    /// The short presets keep at least eight updates; longer ramps sample
+    /// more often rather than spreading those same updates farther apart.
     static let rampSteps = 8
-    static let rampPeakProgress: Double = 0.35
-    /// Moderate end velocity (order 100–400). Large enough for the WindowServer
-    /// to complete the switch, small enough that it animates rather than flicks.
-    static let rampEndVelocity: Double = 130.0
 
     static let `default`: TransitionSpeed = .instant
 

@@ -133,6 +133,12 @@ typedef CF_ENUM(uint16_t, CGGestureMotion) {            // written into field 12
 > macOS's own animated switch. strafe's **Transition speed** setting is
 > therefore a ramp duration, not a velocity
 > (`Sources/strafe/TransitionSpeed.swift`).
+>
+> In Dock on macOS 26, drag offsets are divided by the number of Spaces, while
+> adjacent Space positions are spaced `1 / (count - 1)` apart. The app eases
+> toward a raw progress of `count / (count - 1)` and ends with zero velocity
+> so Dock's release spring doesn't get a flick. Without topology, the app
+> uses a raw progress of 1.0.
 
 ### 1.5 The exact synthesis: one event builder, three-phase sequence
 Each phase is one `CGEventCreate(NULL)` event with all seven fields set, posted to
@@ -301,6 +307,21 @@ if (eventType == kCGSEventGesture && swipeTracking) {
   (direction = sign of progress), not waiting for gesture end — this is what makes
   the override feel instant. `ended` is a fallback (direction from velocityX sign)
   if no nonzero-progress `changed` was seen.
+
+**Optional drag mode.** The tap forwards the real gesture while the fingers
+stay down, including reversals and companion events. On release, half of the
+adjacent Space's travel commits a switch. A recent same-direction flick also
+commits if projected travel reaches halfway; pausing or reversing below
+halfway cancels.
+Flick sensitivity scales the velocity contribution to the projection; it
+does not change the halfway distance, recency window, or direction checks.
+
+The tap suppresses the real release. The engine continues that gesture from
+its last position, at the original location and without posting another
+`began`. It applies the selected preset in proportion to the remaining
+distance, then posts `ended` at the destination or `cancelled` at the origin.
+If a ramp is already in flight, the next gesture doesn't open another live
+preview; a qualifying release queues a regular switch behind the ramp.
 
 ### 2.4 Elastic-rebound handling (repo issue #65 context — issue not publicly
 resolvable via API; behavior is addressed in code as follows)

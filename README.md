@@ -147,7 +147,14 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
 ## Usage
 
 - **3-finger swipe** — just works once strafe is running and has Accessibility.
-  Swipe left/right between Spaces and the switch is instant.
+  Swipe left/right between Spaces. The default is Instant.
+  To preview the next Space without switching, enable **Drag to switch Spaces**
+  in **Settings › Trackpad gestures**. Hold three fingers down to move the
+  desktop without switching. Release at or past halfway, or flick, to switch.
+  A slow release before halfway returns to the current Space.
+  Adjust **Flick sensitivity** from **50% to 300%** (default **100%**) to
+  change how fast a flick must be. Higher values make lighter flicks switch
+  Spaces without changing the halfway rule for slow drags.
 - **Keyboard** — `ctrl`+`opt`+`←` and `ctrl`+`opt`+`→` switch Spaces by default.
   Open **Settings…** from the menu-bar icon to record a shortcut for each
   direction. Use Command, Control, or Option with a key, or a function key;
@@ -161,19 +168,25 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
 - **Menu bar** — click the strafe icon to enable/disable interception, check
   whether swipe interception is actually active, and see which version you're running
   and where to get a newer one.
-- **Transition speed** *(Settings › Space transitions, or menu bar › Transition speed)*
-  — applies to both trackpad swipes and keyboard shortcuts. If instant is too
-  abrupt, you can trade some of it back for animation:
+- **Transition speed** — use the slider in **Settings › Space transitions**
+  to select one of seven presets, from **Instant** to **~300 ms**. The same
+  presets are available in the menu bar. The speed applies to shortcuts,
+  timed swipes, and the remaining distance after you release a drag.
 
-  | preset | measured | what it is |
+  | preset | approx. switch time | what it is |
   | --- | --- | --- |
   | Instant | ~40 ms | the default: no slide at all |
   | Quick | ~80 ms | a hint of motion |
   | Smooth | ~110 ms | a visible but short slide |
 
-  Nothing slower is offered. The next step up measures ~170 ms, which is
-  macOS's own animated switch — and that is already what you get with strafe
-  turned off.
+  For more animation, choose **~150 ms**, **~200 ms**, **~250 ms**, or
+  **~300 ms**. These are estimates; actual switch times vary. To select one
+  from the CLI, run `strafe speed 150`, `strafe speed 200`, `strafe speed 250`,
+  or `strafe speed 300`.
+
+  Animated presets ease into the destination instead of ending with a flick.
+  For unmodified macOS swipes without the halfway rule, choose **Disable** in
+  the menu bar. Strafe keyboard shortcuts still work.
 
 - **Hide from menu bar** *(menu bar › Hide from menu bar)* — hide the strafe
   icon from the menu bar. The app keeps running: swipes and shortcuts still work.

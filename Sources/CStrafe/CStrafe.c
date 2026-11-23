@@ -99,15 +99,14 @@ bool strafe_posted_sign_reversed(void) {
     return strafe_uses_iohid_payload() && natural_scrolling_enabled();
 }
 
-// One phase of a horizontal dock swipe, with progress and velocity supplied by
-// the caller. Every field the WindowServer reads is set here; the two callers
-// below differ only in the numbers they hand it.
-static bool post_dock_swipe_shaped(CGSGesturePhase phase, double progress, double velocity) {
+static bool post_dock_swipe_shaped(CGSGesturePhase phase, double progress,
+                                   double velocity, const CGPoint *location) {
     const bool augmented = strafe_uses_iohid_payload();
     // Keep the caller-facing sign stable: positive means the Space on the right.
     if (strafe_posted_sign_reversed()) { progress = -progress; velocity = -velocity; }
     CGEventRef ev = CGEventCreate(NULL);
-    if (!ev) { return false; }
+    if (!ev) return false;
+    if (location) CGEventSetLocation(ev, *location);
     CGEventSetIntegerValueField(ev, kCGSEventTypeField,            kCGSEventDockControl);
     CGEventSetIntegerValueField(ev, kCGEventGestureHIDType,        kIOHIDEventTypeDockSwipe);
     CGEventSetIntegerValueField(ev, kCGEventGesturePhase,          phase);
@@ -122,7 +121,7 @@ static bool post_dock_swipe_shaped(CGSGesturePhase phase, double progress, doubl
         CGEventSetDoubleValueField(ev, kCGEventGestureSwipePositionX, 0.1);
         CGEventRef replacement = strafe_create_augmented_event(ev);
         CFRelease(ev);
-        if (!replacement) { return false; }
+        if (!replacement) return false;
         ev = replacement;
         companion = CGEventCreate(NULL);
         if (!companion) { CFRelease(ev); return false; }
@@ -150,7 +149,7 @@ static bool post_dock_swipe(CGSGesturePhase phase, StrafeDirection direction, do
     const double vel = augmented && phase != kCGSGesturePhaseEnded
         ? 0.0 : (isRight ? velocity : -velocity);
 
-    return post_dock_swipe_shaped(phase, progress, vel);
+    return post_dock_swipe_shaped(phase, progress, vel, NULL);
 }
 
 bool strafe_post_switch_gesture(StrafeDirection direction, double velocity) {
@@ -161,13 +160,8 @@ bool strafe_post_switch_gesture(StrafeDirection direction, double velocity) {
         && post_dock_swipe(kCGSGesturePhaseEnded,   direction, velocity);
 }
 
-// One phase with caller-chosen progress and velocity, for the animated
-// Transition speed presets (SPEC §1.4). A began, then a `changed` stream whose
-// progress climbs, then an ended is what makes the WindowServer run its slide
-// instead of flicking. The instant preset does not use this — it still goes
-// through `strafe_post_switch_gesture` above, unchanged.
-bool strafe_post_dock_swipe_phase(int64_t phase, double progress, double velocity) {
-    return post_dock_swipe_shaped((CGSGesturePhase)phase, progress, velocity);
+bool strafe_post_dock_swipe_phase(int64_t phase, double progress, const CGPoint *location) {
+    return post_dock_swipe_shaped((CGSGesturePhase)phase, progress, 0.0, location);
 }
 
 // --- Topology (SPEC §6) ---------------------------------------------------

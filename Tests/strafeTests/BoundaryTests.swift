@@ -69,14 +69,103 @@ final class BoundaryTests: XCTestCase {
         XCTAssertEqual(engine.attempts, 1)
     }
 
-    private func event(_ phase: Int64) -> CGEvent {
+    func testHeldDragFollowsFingersAndFinishesOnlyOnReleaseAtHalfway() throws {
+        let engine = RecordingEngine()
+        let interceptor = dragInterceptor(engine)
+
+        for (sign, direction) in [(-1.0, SwitchDirection.left), (1.0, .right)] {
+            // Three Spaces need 1.5 units of raw progress for one full slide.
+            for (phase, distance) in [(1, 0.0), (2, 0.35), (2, 0.75), (2, 0.75)] {
+                let sample = event(Int64(phase), progress: sign * distance)
+                let originalProgress = strafe_event_swipe_progress(sample)
+                XCTAssertTrue(handle(sample, with: interceptor)?.takeUnretainedValue() === sample)
+                XCTAssertEqual(strafe_event_swipe_progress(sample), originalProgress)
+                XCTAssertTrue(engine.finishes.isEmpty, "A held drag cannot commit")
+            }
+            XCTAssertNil(handle(event(4, velocity: 0), with: interceptor))
+            let finish = try XCTUnwrap(engine.finishes.popLast())
+            XCTAssertEqual(finish.preview.progress, sign * 0.75)
+            XCTAssertEqual(finish.destination, direction)
+        }
+        XCTAssertEqual(engine.attempts, 0, "Neither release starts a separate swipe")
+    }
+
+    func testReversingOrHoldingBelowHalfwayReturnsToTheOriginalSpace() throws {
+        let engine = RecordingEngine()
+        let interceptor = dragInterceptor(engine, flickSensitivity: 300)
+        for (positions, releasedAt) in [([0.9, 0.74], UInt64(30_000_000)), ([0.65, 0.65], 300_000_000)] {
+            _ = handle(event(1, progress: 0, timestamp: 0), with: interceptor)
+            for (index, progress) in positions.enumerated() {
+                _ = handle(event(2, progress: progress, timestamp: UInt64(index + 1) * 10_000_000), with: interceptor)
+            }
+            XCTAssertNil(handle(event(4, progress: 0.9, velocity: 10, timestamp: releasedAt), with: interceptor))
+            let finish = try XCTUnwrap(engine.finishes.popLast())
+            XCTAssertEqual(finish.preview.progress, positions.last!, accuracy: 1e-6)
+            XCTAssertNil(finish.destination)
+        }
+    }
+
+    func testQuickFlickStillSwitchesInDragModeIncludingDuringAnotherFinish() throws {
+        let engine = RecordingEngine()
+        let interceptor = dragInterceptor(engine)
+        for pending in [false, true] {
+            engine.hasPendingRamp = pending
+            let began = event(1, progress: 0, timestamp: 0)
+            let changed = event(2, progress: -0.25, timestamp: 20_000_000)
+            if pending {
+                XCTAssertNil(handle(began, with: interceptor))
+                XCTAssertNil(handle(changed, with: interceptor))
+            } else {
+                XCTAssertTrue(handle(began, with: interceptor)?.takeUnretainedValue() === began)
+                XCTAssertTrue(handle(changed, with: interceptor)?.takeUnretainedValue() === changed)
+            }
+            XCTAssertNil(handle(event(4, velocity: -8, timestamp: 25_000_000), with: interceptor))
+            if pending {
+                XCTAssertEqual(engine.attempts, 1, "A second flick queues a full switch without another live preview")
+                XCTAssertEqual(engine.lastDirection, .left)
+                XCTAssertTrue(engine.finishes.isEmpty)
+            } else {
+                let finish = try XCTUnwrap(engine.finishes.popLast())
+                XCTAssertEqual(finish.preview.progress, -0.25)
+                XCTAssertEqual(finish.destination, .left)
+            }
+        }
+    }
+
+    func testFlickSensitivityChangesRequiredReleaseVelocity() throws {
+        let cases: [(sensitivity: Int, velocity: Double, destination: SwitchDirection?)] = [
+            (50, 8, nil), (100, 8, .right), (100, 3, nil), (200, 3, .right),
+        ]
+        for (sensitivity, velocity, destination) in cases {
+            let engine = RecordingEngine()
+            let interceptor = dragInterceptor(engine, flickSensitivity: sensitivity)
+            _ = handle(event(1, progress: 0), with: interceptor)
+            _ = handle(event(2, progress: 0.25, timestamp: 20_000_000), with: interceptor)
+            _ = handle(event(4, velocity: velocity, timestamp: 25_000_000), with: interceptor)
+            let finish = try XCTUnwrap(engine.finishes.popLast())
+            XCTAssertEqual(finish.destination, destination, "\(sensitivity)% at velocity \(velocity)")
+        }
+    }
+
+    private func dragInterceptor(_ engine: RecordingEngine, flickSensitivity: Int = 100) -> SwipeInterceptor {
+        SwipeInterceptor(engine: engine, dragToSwitch: true, flickSensitivity: flickSensitivity,
+                         spaceCount: { 3 }, isExposeActive: { false })
+    }
+
+    private func handle(_ event: CGEvent, with interceptor: SwipeInterceptor) -> Unmanaged<CGEvent>? {
+        interceptor.handle(type: CGEventType(rawValue: 30)!, event: event)
+    }
+
+    private func event(_ phase: Int64, progress: Double = 0.1, velocity: Double = 10,
+                       timestamp: CGEventTimestamp = 0) -> CGEvent {
         let event = CGEvent(source: nil)!
         event.setIntegerValueField(CGEventField(rawValue: 55)!, value: 30)
         event.setIntegerValueField(CGEventField(rawValue: 110)!, value: 23)
         event.setIntegerValueField(CGEventField(rawValue: 123)!, value: 1)
         event.setIntegerValueField(CGEventField(rawValue: 132)!, value: phase)
-        event.setDoubleValueField(CGEventField(rawValue: 124)!, value: 0.1)
-        event.setDoubleValueField(CGEventField(rawValue: 129)!, value: 10)
+        event.setDoubleValueField(CGEventField(rawValue: 124)!, value: progress)
+        event.setDoubleValueField(CGEventField(rawValue: 129)!, value: velocity)
+        event.timestamp = timestamp
         event.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
         return event
     }
@@ -86,11 +175,20 @@ final class BoundaryTests: XCTestCase {
     }
 }
 
-private final class RecordingEngine: SwitchEngine {
+private final class RecordingEngine: DragSwitchEngine {
     var atEdge = false
     var attempts = 0
+    var lastDirection: SwitchDirection?
+    var hasPendingRamp = false
+    var finishes: [(preview: DragContinuation, destination: SwitchDirection?)] = []
+
+    func finishDrag(_ drag: DragContinuation, toward direction: SwitchDirection?) {
+        finishes.append((drag, direction))
+    }
+
     func switchSpace(_ direction: SwitchDirection) throws {
         attempts += 1
+        lastDirection = direction
         if atEdge { throw SwitchEngineError.atEdge }
     }
 }
