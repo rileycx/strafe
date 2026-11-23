@@ -115,7 +115,7 @@ static void check_payload(int phase, double progress, double velocity,
         if (field == 4205 && (size == 68 || size == 96)) {
             assert(offset + 4 + size <= length);
             const uint8_t *payload = bytes + offset + 4;
-            bool hasVelocity = velocity != 0 || phase == 4;
+            bool hasVelocity = velocity != 0 || phase == 4 || phase == 8;
             assert(size == (hasVelocity ? 96 : 68));
             assert(read32(payload + 24) == (hasVelocity ? 2 : 1));
             assert(read32(payload + 28) == 40);
@@ -145,6 +145,7 @@ int main(void) {
     check_payload(1, -1e-4, 0, -6, 0);
     check_payload(4, 1e-4, 2000, 6, 2000 * 65536);
     check_payload(4, 0, 0, 0, 0);
+    check_payload(8, 0, 0, 0, 0);
     check_payload(2, FLT_TRUE_MIN, 0, 1, 0);
     check_payload(2, -FLT_TRUE_MIN, 0, -1, 0);
     check_payload(4, INFINITY, 1e30, 0, INT32_MAX);

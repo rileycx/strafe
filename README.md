@@ -147,7 +147,11 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
 ## Usage
 
 - **3-finger swipe** — just works once strafe is running and has Accessibility.
-  Swipe left/right between Spaces and the switch is instant.
+  Swipe left/right between Spaces. The default is Instant.
+  To preview the next Space without switching, enable **Drag to switch Spaces**
+  in **Settings › Trackpad gestures**. Hold three fingers down to move the
+  desktop. Release at or past halfway to switch; release before halfway
+  to return to the current Space.
 - **Keyboard** — `ctrl`+`opt`+`←` and `ctrl`+`opt`+`→` switch Spaces by default.
   Open **Settings…** from the menu-bar icon to record a shortcut for each
   direction. Use Command, Control, or Option with a key, or a function key;
@@ -162,8 +166,8 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   whether swipe interception is actually active, and see which version you're running
   and where to get a newer one.
 - **Transition speed** *(Settings › Space transitions, or menu bar › Transition speed)*
-  — applies to both trackpad swipes and keyboard shortcuts. If instant is too
-  abrupt, you can trade some of it back for animation:
+  — applies to keyboard shortcuts and timed trackpad swipes, not
+  **Drag to switch Spaces**. If instant is too abrupt, choose an animation:
 
   | preset | approx. switch time | what it is |
   | --- | --- | --- |
@@ -177,9 +181,8 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   or `strafe speed 300`.
 
   Animated presets ease into the destination instead of ending with a flick.
-  The slide is timed and does not follow your fingers. For the native trackpad
-  feel, choose **Disable** in the menu bar. macOS then handles trackpad swipes,
-  and strafe shortcuts still work.
+  For unmodified macOS swipes without the halfway rule, choose **Disable** in
+  the menu bar. Strafe keyboard shortcuts still work.
 
 - **Hide from menu bar** *(menu bar › Hide from menu bar)* — hide the strafe
   icon from the menu bar. The app keeps running: swipes and shortcuts still work.

@@ -99,15 +99,16 @@ bool strafe_posted_sign_reversed(void) {
     return strafe_uses_iohid_payload() && natural_scrolling_enabled();
 }
 
-// One phase of a horizontal dock swipe, with progress and velocity supplied by
-// the caller. Every field the WindowServer reads is set here; the two callers
-// below differ only in the numbers they hand it.
-static bool post_dock_swipe_shaped(CGSGesturePhase phase, double progress, double velocity) {
-    const bool augmented = strafe_uses_iohid_payload();
-    // Keep the caller-facing sign stable: positive means the Space on the right.
-    if (strafe_posted_sign_reversed()) { progress = -progress; velocity = -velocity; }
-    CGEventRef ev = CGEventCreate(NULL);
-    if (!ev) { return false; }
+static CGEventRef create_dock_swipe(CGSGesturePhase phase, double progress,
+                                    double velocity, bool augmented, CGEventRef original) {
+    // Copy the native event on the legacy path. Start fresh on the augmented
+    // path so the new phase cannot disagree with an existing raw HID payload.
+    CGEventRef ev = original && !augmented ? CGEventCreateCopy(original) : CGEventCreate(NULL);
+    if (!ev) return NULL;
+    if (original && augmented) {
+        CGEventSetLocation(ev, CGEventGetLocation(original));
+        CGEventSetTimestamp(ev, CGEventGetTimestamp(original));
+    }
     CGEventSetIntegerValueField(ev, kCGSEventTypeField,            kCGSEventDockControl);
     CGEventSetIntegerValueField(ev, kCGEventGestureHIDType,        kIOHIDEventTypeDockSwipe);
     CGEventSetIntegerValueField(ev, kCGEventGesturePhase,          phase);
@@ -115,15 +116,25 @@ static bool post_dock_swipe_shaped(CGSGesturePhase phase, double progress, doubl
     CGEventSetIntegerValueField(ev, kCGEventGestureSwipeMotion,    kCGGestureMotionHorizontal);
     CGEventSetDoubleValueField (ev, kCGEventGestureSwipeVelocityX, velocity);
     CGEventSetDoubleValueField (ev, kCGEventGestureSwipeVelocityY, augmented ? 0 : velocity);
+    if (original || augmented) {
+        CGEventSetIntegerValueField(ev, kCGEventGesturePhaseAlias, phase);
+    }
+    if (!augmented) return ev;
+    CGEventSetDoubleValueField(ev, kCGEventGestureZoomDeltaY, 3.0);
+    CGEventSetDoubleValueField(ev, kCGEventGestureSwipePositionX, 0.1);
+    CGEventRef replacement = strafe_create_augmented_event(ev);
+    CFRelease(ev);
+    return replacement;
+}
+
+static bool post_dock_swipe_shaped(CGSGesturePhase phase, double progress, double velocity) {
+    const bool augmented = strafe_uses_iohid_payload();
+    // Keep the caller-facing sign stable: positive means the Space on the right.
+    if (strafe_posted_sign_reversed()) { progress = -progress; velocity = -velocity; }
+    CGEventRef ev = create_dock_swipe(phase, progress, velocity, augmented, NULL);
+    if (!ev) return false;
     CGEventRef companion = NULL;
     if (augmented) {
-        CGEventSetIntegerValueField(ev, kCGEventGesturePhaseAlias, phase);
-        CGEventSetDoubleValueField(ev, kCGEventGestureZoomDeltaY, 3.0);
-        CGEventSetDoubleValueField(ev, kCGEventGestureSwipePositionX, 0.1);
-        CGEventRef replacement = strafe_create_augmented_event(ev);
-        CFRelease(ev);
-        if (!replacement) { return false; }
-        ev = replacement;
         companion = CGEventCreate(NULL);
         if (!companion) { CFRelease(ev); return false; }
         CGEventSetIntegerValueField(companion, kCGSEventTypeField, kCGSEventGesture);
@@ -315,6 +326,11 @@ void strafe_clear_swipe_motion(CGEventRef event) {
     CGEventSetDoubleValueField(event, kCGEventGestureSwipeProgress, 0);
     CGEventSetDoubleValueField(event, kCGEventGestureSwipeVelocityX, 0);
     CGEventSetDoubleValueField(event, kCGEventGestureSwipeVelocityY, 0);
+}
+
+CGEventRef strafe_create_cancelled_swipe(CGEventRef original) {
+    return create_dock_swipe(kCGSGesturePhaseCancelled, 0.0, 0.0,
+                             strafe_uses_iohid_payload(), original);
 }
 
 // --- Constants (SPEC §1.3) ------------------------------------------------

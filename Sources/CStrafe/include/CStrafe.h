@@ -42,6 +42,8 @@ bool strafe_uses_iohid_payload(void);
 bool strafe_posted_sign_reversed(void);
 bool strafe_event_moves_right(double progressOrVelocity);
 void strafe_clear_swipe_motion(CGEventRef event);
+// Replace a real swipe's release with a no-motion cancellation.
+CGEventRef strafe_create_cancelled_swipe(CGEventRef original) CF_RETURNS_RETAINED;
 
 // --- Synthesis (SPEC §1.4, §1.5) ------------------------------------------
 // Post one instant single-step dock swipe: began -> changed -> ended, all

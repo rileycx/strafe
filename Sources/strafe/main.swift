@@ -160,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Prompt for accessibility up front so the tap can be created.
         Permissions.checkAccessibility(prompt: true)
 
-        interceptor = SwipeInterceptor(engine: engine)
+        interceptor = SwipeInterceptor(engine: engine, dragToSwitch: SwipeInterceptor.storedDragToSwitch)
 
         hotkeys = HotkeyManager(engine: engine)
         hotkeys.start()

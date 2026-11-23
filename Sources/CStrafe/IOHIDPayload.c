@@ -83,7 +83,7 @@ static uint8_t *generate_iohid_payload(CGEventRef event, size_t *out_length) {
     double vel_y = CGEventGetDoubleValueField(event, (CGEventField)130);
     int64_t swipe_mask = CGEventGetIntegerValueField(event, kCGEventGestureSwipeMask);
 
-    bool include_velocity = (vel_x != 0.0 || vel_y != 0.0 || phase == 4);
+    bool include_velocity = (vel_x != 0.0 || vel_y != 0.0 || phase == 4 || phase == 8);
     uint32_t event_count = include_velocity ? 2 : 1;
     size_t payload_length = sizeof(IOHIDSystemQueueElementHeader)
                           + sizeof(IOHIDFluidTouchGestureData);

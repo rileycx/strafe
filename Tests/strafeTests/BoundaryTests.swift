@@ -69,13 +69,51 @@ final class BoundaryTests: XCTestCase {
         XCTAssertEqual(engine.attempts, 1)
     }
 
-    private func event(_ phase: Int64) -> CGEvent {
+    func testHeldDragFollowsFingersAndCommitsOnlyOnReleaseAtHalfway() {
+        let engine = RecordingEngine()
+        let interceptor = SwipeInterceptor(
+            engine: engine, dragToSwitch: true, spaceCount: { 3 }, isExposeActive: { false })
+
+        for sign in [-1.0, 1.0] {
+            // Three Spaces need 1.5 units of raw progress for one full slide.
+            for (phase, distance) in [(1, 0.0), (2, 0.35), (2, 0.75), (2, 0.75), (4, 0.75)] {
+                let sample = event(Int64(phase), progress: sign * distance)
+                let originalProgress = strafe_event_swipe_progress(sample)
+                let result = interceptor.handle(type: CGEventType(rawValue: 30)!, event: sample)
+                XCTAssertTrue(result?.takeUnretainedValue() === sample)
+                XCTAssertEqual(strafe_event_swipe_progress(sample), originalProgress)
+                XCTAssertEqual(engine.attempts, 0, "Dock owns the drag and its release")
+            }
+        }
+    }
+
+    func testReversingBelowHalfwayCancelsEvenWithAReleaseFlick() throws {
+        let engine = RecordingEngine()
+        let interceptor = SwipeInterceptor(
+            engine: engine, dragToSwitch: true, spaceCount: { 3 }, isExposeActive: { false })
+        for (phase, progress) in [(1, 0.0), (2, 0.9), (2, 0.74)] {
+            let sample = event(Int64(phase), progress: progress)
+            XCTAssertTrue(interceptor.handle(type: CGEventType(rawValue: 30)!, event: sample)?
+                .takeUnretainedValue() === sample)
+        }
+        let release = event(4, progress: 0.9)
+        let result = try XCTUnwrap(interceptor.handle(type: CGEventType(rawValue: 30)!, event: release))
+        guard result.takeUnretainedValue() !== release else {
+            return XCTFail("Releasing below halfway must not forward the real flick")
+        }
+        let cancellation = result.takeRetainedValue()
+        XCTAssertEqual(strafe_event_gesture_phase(cancellation), strafe_gesture_phase_cancelled())
+        XCTAssertEqual(strafe_event_swipe_velocity_x(cancellation), 0)
+        XCTAssertEqual(engine.attempts, 0)
+    }
+
+    private func event(_ phase: Int64, progress: Double = 0.1) -> CGEvent {
         let event = CGEvent(source: nil)!
         event.setIntegerValueField(CGEventField(rawValue: 55)!, value: 30)
         event.setIntegerValueField(CGEventField(rawValue: 110)!, value: 23)
         event.setIntegerValueField(CGEventField(rawValue: 123)!, value: 1)
         event.setIntegerValueField(CGEventField(rawValue: 132)!, value: phase)
-        event.setDoubleValueField(CGEventField(rawValue: 124)!, value: 0.1)
+        event.setDoubleValueField(CGEventField(rawValue: 124)!, value: progress)
         event.setDoubleValueField(CGEventField(rawValue: 129)!, value: 10)
         event.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
         return event

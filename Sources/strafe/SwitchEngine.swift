@@ -114,6 +114,13 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         rampQueue.sync {}
     }
 
+    static func adjacentSpaceTravel(spaceCount: UInt32?) -> Double {
+        // Dock divides drag input by the display's Space count, but adjacent
+        // Space positions are spaced 1 / (count - 1) apart.
+        guard let spaceCount, spaceCount > 1 else { return 1.0 }
+        return Double(spaceCount) / Double(spaceCount - 1)
+    }
+
     /// Post one directional switch in whatever shape the current speed calls for.
     ///
     /// Returns whether the switch was *dispatched*, not whether it completed:
@@ -130,15 +137,7 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         // Keep the short presets' sampling, but don't stretch eight updates
         // across a slow ramp. Aim for at least one update per 120 Hz frame.
         let steps = max(TransitionSpeed.rampSteps, Int((rampMs * 120 / 1_000).rounded(.up)))
-        // Dock divides drag input by the display's Space count, but adjacent
-        // Space positions are spaced 1 / (count - 1) apart. A raw 1.0 stops at
-        // two-thirds of a slide when there are three Spaces.
-        let travel: Double
-        if let spaceCount, spaceCount > 1 {
-            travel = sign * Double(spaceCount) / Double(spaceCount - 1)
-        } else {
-            travel = sign
-        }
+        let travel = sign * Self.adjacentSpaceTravel(spaceCount: spaceCount)
         let stepNanos = UInt64(rampMs * 1_000_000 / Double(steps))
 
         rampQueue.async {

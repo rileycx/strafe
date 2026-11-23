@@ -35,6 +35,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var recordingAction: ShortcutAction?
     private let enableShortcuts = NSButton(checkboxWithTitle: "Enable keyboard shortcuts", target: nil, action: nil)
     private let speed = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let dragToSwitch = NSButton(checkboxWithTitle: "Drag to switch Spaces", target: nil, action: nil)
     private let message = NSTextField(wrappingLabelWithString: "")
     private let swipeStatus = NSTextField(wrappingLabelWithString: "")
     private var statusTimer: Timer?
@@ -138,7 +139,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         speed.isEnabled = engine != nil
         speed.setAccessibilityLabel("Transition speed for swipes and keyboard shortcuts")
         stack.addArrangedSubview(NSStackView(views: [NSTextField(labelWithString: "Transition speed"), speed]))
-        let speedHelp = NSTextField(wrappingLabelWithString: "Applies to both trackpad swipes and keyboard shortcuts.")
+        let speedHelp = NSTextField(wrappingLabelWithString: "Applies to keyboard shortcuts and timed trackpad swipes.")
         speedHelp.font = .systemFont(ofSize: 12)
         speedHelp.textColor = .secondaryLabelColor
         stack.addArrangedSubview(speedHelp)
@@ -151,6 +152,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let gestures = NSTextField(labelWithString: "Trackpad gestures")
         gestures.font = .systemFont(ofSize: 16, weight: .semibold)
         stack.addArrangedSubview(gestures)
+        dragToSwitch.target = self
+        dragToSwitch.action = #selector(toggleDragToSwitch)
+        stack.addArrangedSubview(dragToSwitch)
+        let dragHelp = NSTextField(wrappingLabelWithString: "Follow your fingers and release at or past halfway to switch. Uses the macOS animation.")
+        dragHelp.font = .systemFont(ofSize: 12)
+        dragHelp.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(dragHelp)
+        dragHelp.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         swipeStatus.font = .systemFont(ofSize: 12)
         swipeStatus.textColor = .secondaryLabelColor
         stack.addArrangedSubview(swipeStatus)
@@ -161,6 +170,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private func refresh() {
         enableShortcuts.state = HotkeyManager.enabled ? .on : .off
+        dragToSwitch.state = interceptor.dragToSwitch ? .on : .off
         for action in ShortcutAction.allCases {
             let recorder = recorders[action]!
             recorder.recording = recordingAction == action
@@ -226,6 +236,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         hotkeys.applyStoredState()
         message.stringValue = hotkeys.registrationError ?? ""
         refresh()
+    }
+
+    @objc private func toggleDragToSwitch() {
+        interceptor.setDragToSwitch(dragToSwitch.state == .on)
     }
 
     @objc private func changeSpeed() {

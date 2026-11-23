@@ -2,8 +2,8 @@ import CoreGraphics
 import Foundation
 import CStrafe
 
-/// Owns the `CGEventTap` that detects the user's real 3-finger horizontal
-/// space-swipe, suppresses it, and fires the engine's instant switch instead
+/// Owns the `CGEventTap` for real 3-finger horizontal Space swipes, replacing
+/// them with a timed switch or letting Dock track motion until release
 /// (SPEC §2).
 ///
 /// Concurrency: the tap source is installed on the **main** run loop in
@@ -16,6 +16,7 @@ import CStrafe
 final class SwipeInterceptor: @unchecked Sendable {
     private let engine: SwitchEngine
     private let isExposeActive: () -> Bool
+    private let spaceCount: () -> UInt32?
     private var eventTap: (any SwipeEventTap)?
     private let accessibilityGranted: () -> Bool
     private let makeTap: (CGEventTapCallBack, UnsafeMutableRawPointer) -> (any SwipeEventTap)?
@@ -36,16 +37,38 @@ final class SwipeInterceptor: @unchecked Sendable {
     /// event through untouched (SPEC §2.2: "only acts when swipeOverrideEnabled").
     var overrideEnabled: Bool = true
 
+    private static let dragToSwitchKey = "dragToSwitch"
+
+    static var storedDragToSwitch: Bool {
+        Preferences.store.bool(forKey: dragToSwitchKey)
+    }
+
+    private(set) var dragToSwitch: Bool
+
+    func setDragToSwitch(_ enabled: Bool) {
+        dragToSwitch = enabled
+        Preferences.store.set(enabled, forKey: Self.dragToSwitchKey)
+    }
+
     // MARK: - State machine (SPEC §2.3). Main-run-loop confined.
     private var swipeTracking = false
     private var swipeFired = false
     private var swipePosted = false
+    private var dragHalfway: Double?
+    private var dragProgress: Double = 0
 
     init(engine: SwitchEngine,
+         dragToSwitch: Bool = false,
+         spaceCount: @escaping () -> UInt32? = {
+             var info = StrafeInfo()
+             return strafe_get_space_info(&info) ? info.spaceCount : nil
+         },
          isExposeActive: @escaping () -> Bool = { strafe_is_expose_active() },
          accessibilityGranted: @escaping () -> Bool = { Permissions.isAccessibilityGranted },
          makeTap: @escaping (CGEventTapCallBack, UnsafeMutableRawPointer) -> (any SwipeEventTap)? = SystemSwipeEventTap.make) {
         self.engine = engine
+        self.dragToSwitch = dragToSwitch
+        self.spaceCount = spaceCount
         self.isExposeActive = isExposeActive
         self.accessibilityGranted = accessibilityGranted
         self.makeTap = makeTap
@@ -143,6 +166,8 @@ final class SwipeInterceptor: @unchecked Sendable {
         swipeTracking = false
         swipeFired = false
         swipePosted = false
+        dragHalfway = nil
+        dragProgress = 0
     }
 
     // MARK: - Callback (runs on the main run loop)
@@ -206,12 +231,32 @@ final class SwipeInterceptor: @unchecked Sendable {
         let phase = strafe_event_gesture_phase(event)
 
         if phase == strafe_gesture_phase_began() {
+            resetGesture()
             // Let real gestures through while an overlay (Exposé) is up (SPEC §2.5).
             if isExposeActive() { return passthrough }
+            if dragToSwitch {
+                dragHalfway = GestureSwitchEngine.adjacentSpaceTravel(spaceCount: spaceCount()) / 2
+                return passthrough
+            }
             swipeTracking = true
-            swipeFired = false
-            swipePosted = false
             return nil  // SUPPRESS the real 'began'
+
+        } else if let halfway = dragHalfway {
+            // Dock renders the untouched real drag, including holds and reversals.
+            // Decide only on release, using the last position that was rendered
+            // rather than the terminal event's flick velocity.
+            if phase == strafe_gesture_phase_changed() {
+                dragProgress = strafe_event_swipe_progress(event)
+            } else if phase == strafe_gesture_phase_ended() {
+                let pastHalfway = abs(dragProgress) >= halfway
+                resetGesture()
+                if !pastHalfway, let cancelled = strafe_create_cancelled_swipe(event) {
+                    return Unmanaged.passRetained(cancelled)
+                }
+            } else if phase == strafe_gesture_phase_cancelled() {
+                resetGesture()
+            }
+            return passthrough
 
         } else if phase == strafe_gesture_phase_changed() {
             guard swipeTracking else { return passthrough }
@@ -258,9 +303,8 @@ final class SwipeInterceptor: @unchecked Sendable {
             return nil  // SUPPRESS
 
         } else if phase == strafe_gesture_phase_cancelled() {
-            swipeTracking = false
-            swipeFired = false
-            swipePosted = false
+            guard swipeTracking else { return passthrough }
+            resetGesture()
             return nil
 
         } else {

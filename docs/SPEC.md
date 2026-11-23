@@ -308,6 +308,14 @@ if (eventType == kCGSEventGesture && swipeTracking) {
   the override feel instant. `ended` is a fallback (direction from velocityX sign)
   if no nonzero-progress `changed` was seen.
 
+**Optional drag mode.** The tap forwards the real gesture while the fingers
+stay down, including reversals and companion events. At release it checks the
+last `changed` progress against half of the adjacent Space's travel. A release
+before halfway is replaced with a stationary `cancelled` event, including a
+matching IOHID payload on macOS 27. Otherwise the real release goes through.
+Dock renders the drag and settles it; transition speed presets do not time this
+path.
+
 ### 2.4 Elastic-rebound handling (repo issue #65 context — issue not publicly
 resolvable via API; behavior is addressed in code as follows)
 The real problem the override must beat: between two rapid swipes, macOS's live
