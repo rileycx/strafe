@@ -87,12 +87,6 @@ enum TransitionSpeed: Int, CaseIterable {
     /// The short presets keep at least eight updates; longer ramps sample
     /// more often rather than spreading those same updates farther apart.
     static let rampSteps = 8
-    /// Drive the whole slide before ending the gesture. The benchmark's 0.35
-    /// peak left the remaining travel to the system's release animation.
-    static let rampPeakProgress: Double = 1.0
-    /// Moderate end velocity (order 100–400). Large enough for the WindowServer
-    /// to complete the switch, small enough that it animates rather than flicks.
-    static let rampEndVelocity: Double = 130.0
 
     static let `default`: TransitionSpeed = .instant
 

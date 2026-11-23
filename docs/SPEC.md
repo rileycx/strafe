@@ -133,8 +133,12 @@ typedef CF_ENUM(uint16_t, CGGestureMotion) {            // written into field 12
 > macOS's own animated switch. strafe's **Transition speed** setting is
 > therefore a ramp duration, not a velocity
 > (`Sources/strafe/TransitionSpeed.swift`).
-> The benchmark used a peak of 0.35; the app ramps to full travel (1.0)
-> before `ended` so it doesn't leave most of the slide to macOS.
+>
+> In Dock on macOS 26, drag offsets are divided by the number of Spaces, while
+> adjacent Space positions are spaced `1 / (count - 1)` apart. The app eases
+> toward a raw progress of `count / (count - 1)` and ends with zero velocity
+> so Dock's release spring doesn't get a flick. Without topology, the app
+> uses a raw progress of 1.0.
 
 ### 1.5 The exact synthesis: one event builder, three-phase sequence
 Each phase is one `CGEventCreate(NULL)` event with all seven fields set, posted to

@@ -176,8 +176,8 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   from the CLI, run `strafe speed 150`, `strafe speed 200`, `strafe speed 250`,
   or `strafe speed 300`.
 
-  Animated presets drive the full slide before ending the gesture, but the
-  slide is timed and does not follow your fingers. For the native trackpad
+  Animated presets ease into the destination instead of ending with a flick.
+  The slide is timed and does not follow your fingers. For the native trackpad
   feel, choose **Disable** in the menu bar. macOS then handles trackpad swipes,
   and strafe shortcuts still work.
 

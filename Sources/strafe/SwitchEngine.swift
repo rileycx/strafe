@@ -121,7 +121,7 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
     /// `CGEventCreate`, while a ramp is handed to `rampQueue` and returns true
     /// immediately. Either way the caller's optimistic prediction update is
     /// correct, because that models where we are going, not where we are.
-    private func post(_ direction: SwitchDirection, speed: TransitionSpeed) -> Bool {
+    private func post(_ direction: SwitchDirection, speed: TransitionSpeed, spaceCount: UInt32?) -> Bool {
         guard let rampMs = speed.rampMilliseconds else {
             return strafe_post_switch_gesture(direction.cDirection, velocity)
         }
@@ -130,8 +130,15 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         // Keep the short presets' sampling, but don't stretch eight updates
         // across a slow ramp. Aim for at least one update per 120 Hz frame.
         let steps = max(TransitionSpeed.rampSteps, Int((rampMs * 120 / 1_000).rounded(.up)))
-        let peak = TransitionSpeed.rampPeakProgress
-        let endVelocity = TransitionSpeed.rampEndVelocity
+        // Dock divides drag input by the display's Space count, but adjacent
+        // Space positions are spaced 1 / (count - 1) apart. A raw 1.0 stops at
+        // two-thirds of a slide when there are three Spaces.
+        let travel: Double
+        if let spaceCount, spaceCount > 1 {
+            travel = sign * Double(spaceCount) / Double(spaceCount - 1)
+        } else {
+            travel = sign
+        }
         let stepNanos = UInt64(rampMs * 1_000_000 / Double(steps))
 
         rampQueue.async {
@@ -141,10 +148,11 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
             let start = DispatchTime.now().uptimeNanoseconds
             for step in 1...steps {
                 let frac = Double(step) / Double(steps)
+                let eased = frac * frac * (3.0 - 2.0 * frac)
                 _ = strafe_post_dock_swipe_phase(
                     strafe_gesture_phase_changed(),
-                    sign * peak * frac,
-                    sign * endVelocity * frac
+                    travel * eased,
+                    0.0
                 )
                 // Sleep to a fixed deadline so posting and wake-up overhead
                 // don't accumulate across the ramp.
@@ -154,9 +162,10 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
                     usleep(UInt32((deadline - now + 999) / 1_000))
                 }
             }
-            // ended: a moderate velocity commits the switch with its animation.
+            // Dock feeds release velocity into its spring. We already drove
+            // the slide to the target, so end at rest instead of adding a kick.
             _ = strafe_post_dock_swipe_phase(
-                strafe_gesture_phase_ended(), sign * peak, sign * endVelocity
+                strafe_gesture_phase_ended(), travel, 0.0
             )
         }
         return true
@@ -185,7 +194,7 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
             let shape = speed
             lock.unlock()
 
-            guard post(direction, speed: shape) else {
+            guard post(direction, speed: shape, spaceCount: info.spaceCount) else {
                 throw SwitchEngineError.postFailed
             }
 
@@ -194,7 +203,7 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
             predictions[displayID] = target
             lock.unlock()
         } else {
-            guard post(direction, speed: transitionSpeed) else {
+            guard post(direction, speed: transitionSpeed, spaceCount: nil) else {
                 throw SwitchEngineError.postFailed
             }
         }
