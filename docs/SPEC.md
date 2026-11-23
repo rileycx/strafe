@@ -313,6 +313,8 @@ stay down, including reversals and companion events. On release, half of the
 adjacent Space's travel commits a switch. A recent same-direction flick also
 commits if projected travel reaches halfway; pausing or reversing below
 halfway cancels.
+Flick sensitivity scales the velocity contribution to the projection; it
+does not change the halfway distance, recency window, or direction checks.
 
 The tap suppresses the real release. The engine continues that gesture from
 its last position, at the original location and without posting another

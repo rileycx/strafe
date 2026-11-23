@@ -92,7 +92,7 @@ final class BoundaryTests: XCTestCase {
 
     func testReversingOrHoldingBelowHalfwayReturnsToTheOriginalSpace() throws {
         let engine = RecordingEngine()
-        let interceptor = dragInterceptor(engine)
+        let interceptor = dragInterceptor(engine, flickSensitivity: 300)
         for (positions, releasedAt) in [([0.9, 0.74], UInt64(30_000_000)), ([0.65, 0.65], 300_000_000)] {
             _ = handle(event(1, progress: 0, timestamp: 0), with: interceptor)
             for (index, progress) in positions.enumerated() {
@@ -132,8 +132,24 @@ final class BoundaryTests: XCTestCase {
         }
     }
 
-    private func dragInterceptor(_ engine: RecordingEngine) -> SwipeInterceptor {
-        SwipeInterceptor(engine: engine, dragToSwitch: true, spaceCount: { 3 }, isExposeActive: { false })
+    func testFlickSensitivityChangesRequiredReleaseVelocity() throws {
+        let cases: [(sensitivity: Int, velocity: Double, destination: SwitchDirection?)] = [
+            (50, 8, nil), (100, 8, .right), (100, 3, nil), (200, 3, .right),
+        ]
+        for (sensitivity, velocity, destination) in cases {
+            let engine = RecordingEngine()
+            let interceptor = dragInterceptor(engine, flickSensitivity: sensitivity)
+            _ = handle(event(1, progress: 0), with: interceptor)
+            _ = handle(event(2, progress: 0.25, timestamp: 20_000_000), with: interceptor)
+            _ = handle(event(4, velocity: velocity, timestamp: 25_000_000), with: interceptor)
+            let finish = try XCTUnwrap(engine.finishes.popLast())
+            XCTAssertEqual(finish.destination, destination, "\(sensitivity)% at velocity \(velocity)")
+        }
+    }
+
+    private func dragInterceptor(_ engine: RecordingEngine, flickSensitivity: Int = 100) -> SwipeInterceptor {
+        SwipeInterceptor(engine: engine, dragToSwitch: true, flickSensitivity: flickSensitivity,
+                         spaceCount: { 3 }, isExposeActive: { false })
     }
 
     private func handle(_ event: CGEvent, with interceptor: SwipeInterceptor) -> Unmanaged<CGEvent>? {

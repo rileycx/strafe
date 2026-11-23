@@ -152,6 +152,9 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   in **Settings › Trackpad gestures**. Hold three fingers down to move the
   desktop without switching. Release at or past halfway, or flick, to switch.
   A slow release before halfway returns to the current Space.
+  Adjust **Flick sensitivity** from **50% to 300%** (default **100%**) to
+  change how fast a flick must be. Higher values make lighter flicks switch
+  Spaces without changing the halfway rule for slow drags.
 - **Keyboard** — `ctrl`+`opt`+`←` and `ctrl`+`opt`+`→` switch Spaces by default.
   Open **Settings…** from the menu-bar icon to record a shortcut for each
   direction. Use Command, Control, or Option with a key, or a function key;

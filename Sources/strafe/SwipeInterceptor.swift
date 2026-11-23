@@ -39,16 +39,35 @@ final class SwipeInterceptor: @unchecked Sendable {
     var overrideEnabled: Bool = true
 
     private static let dragToSwitchKey = "dragToSwitch"
+    private static let flickSensitivityKey = "flickSensitivity"
+    static let flickSensitivityRange = 50...300
+    static let defaultFlickSensitivity = 100
 
     static var storedDragToSwitch: Bool {
         Preferences.store.bool(forKey: dragToSwitchKey)
     }
 
+    static var storedFlickSensitivity: Int {
+        Preferences.store.object(forKey: flickSensitivityKey) as? Int ?? defaultFlickSensitivity
+    }
+
     private(set) var dragToSwitch: Bool
+    private(set) var flickSensitivity: Int
 
     func setDragToSwitch(_ enabled: Bool) {
         dragToSwitch = enabled
         Preferences.store.set(enabled, forKey: Self.dragToSwitchKey)
+    }
+
+    private static func clampFlickSensitivity(_ percent: Int) -> Int {
+        min(max(percent, flickSensitivityRange.lowerBound), flickSensitivityRange.upperBound)
+    }
+
+    func setFlickSensitivity(_ percent: Int) {
+        let clamped = Self.clampFlickSensitivity(percent)
+        guard clamped != flickSensitivity else { return }
+        flickSensitivity = clamped
+        Preferences.store.set(clamped, forKey: Self.flickSensitivityKey)
     }
 
     // MARK: - State machine (SPEC §2.3). Main-run-loop confined.
@@ -72,7 +91,7 @@ final class SwipeInterceptor: @unchecked Sendable {
             motionAt = timestamp
         }
 
-        func destination(velocity: Double, timestamp: CGEventTimestamp) -> SwitchDirection? {
+        func destination(velocity: Double, timestamp: CGEventTimestamp, sensitivity: Int) -> SwitchDirection? {
             let halfway = travel / 2
             if abs(progress) >= halfway { return progress > 0 ? .right : .left }
 
@@ -82,13 +101,14 @@ final class SwipeInterceptor: @unchecked Sendable {
                   velocity.isFinite, velocity != 0,
                   progress == 0 || (progress > 0) == (velocity > 0),
                   delta == 0 || (delta > 0) == (velocity > 0),
-                  abs(progress + velocity * 0.12) >= halfway else { return nil }
+                  abs(progress + velocity * 0.12 * (Double(sensitivity) / 100)) >= halfway else { return nil }
             return velocity > 0 ? .right : .left
         }
     }
 
     init(engine: SwitchEngine,
          dragToSwitch: Bool = false,
+         flickSensitivity: Int = SwipeInterceptor.defaultFlickSensitivity,
          spaceCount: @escaping () -> UInt32? = {
              var info = StrafeInfo()
              return strafe_get_space_info(&info) ? info.spaceCount : nil
@@ -99,6 +119,7 @@ final class SwipeInterceptor: @unchecked Sendable {
         self.engine = engine
         self.dragEngine = engine as? any DragSwitchEngine
         self.dragToSwitch = dragToSwitch
+        self.flickSensitivity = Self.clampFlickSensitivity(flickSensitivity)
         self.spaceCount = spaceCount
         self.isExposeActive = isExposeActive
         self.accessibilityGranted = accessibilityGranted
@@ -280,7 +301,7 @@ final class SwipeInterceptor: @unchecked Sendable {
                 self.drag?.update(progress: strafe_event_swipe_progress(event), timestamp: event.timestamp)
             } else if phase == strafe_gesture_phase_ended() {
                 let destination = drag.destination(velocity: strafe_event_swipe_velocity_x(event),
-                                                   timestamp: event.timestamp)
+                                                   timestamp: event.timestamp, sensitivity: flickSensitivity)
                 if drag.previewed {
                     resetGesture()
                     let continuation = DragContinuation(progress: drag.progress, travel: drag.travel,

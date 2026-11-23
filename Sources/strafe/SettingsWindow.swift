@@ -36,6 +36,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let enableShortcuts = NSButton(checkboxWithTitle: "Enable keyboard shortcuts", target: nil, action: nil)
     private let speed = NSPopUpButton(frame: .zero, pullsDown: false)
     private let dragToSwitch = NSButton(checkboxWithTitle: "Drag to switch Spaces", target: nil, action: nil)
+    private let flickSensitivity = NSSlider(
+        value: Double(SwipeInterceptor.defaultFlickSensitivity),
+        minValue: Double(SwipeInterceptor.flickSensitivityRange.lowerBound),
+        maxValue: Double(SwipeInterceptor.flickSensitivityRange.upperBound),
+        target: nil, action: nil)
+    private let flickSensitivityValue = NSTextField(labelWithString: "")
     private let message = NSTextField(wrappingLabelWithString: "")
     private let swipeStatus = NSTextField(wrappingLabelWithString: "")
     private var statusTimer: Timer?
@@ -160,6 +166,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         dragHelp.textColor = .secondaryLabelColor
         stack.addArrangedSubview(dragHelp)
         dragHelp.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let flickLabel = NSTextField(labelWithString: "Flick sensitivity")
+        flickSensitivity.target = self
+        flickSensitivity.action = #selector(changeFlickSensitivity)
+        flickSensitivity.setAccessibilityLabel(flickLabel.stringValue)
+        flickSensitivity.toolTip = "Higher values make lighter flicks switch Spaces."
+        flickSensitivityValue.alignment = .right
+        flickSensitivityValue.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        let flickRow = NSStackView(views: [flickLabel, flickSensitivity, flickSensitivityValue])
+        flickRow.spacing = 8
+        stack.addArrangedSubview(flickRow)
+        flickRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         swipeStatus.font = .systemFont(ofSize: 12)
         swipeStatus.textColor = .secondaryLabelColor
         stack.addArrangedSubview(swipeStatus)
@@ -171,6 +188,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func refresh() {
         enableShortcuts.state = HotkeyManager.enabled ? .on : .off
         dragToSwitch.state = interceptor.dragToSwitch ? .on : .off
+        refreshFlickSensitivity()
         for action in ShortcutAction.allCases {
             let recorder = recorders[action]!
             recorder.recording = recordingAction == action
@@ -179,6 +197,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         if let error = hotkeys.registrationError { message.stringValue = error }
         speed.selectItem(withTag: (engine?.transitionSpeed ?? TransitionSpeed.stored).rawValue)
         refreshSwipeStatus()
+    }
+
+    private func refreshFlickSensitivity() {
+        flickSensitivity.isEnabled = interceptor.dragToSwitch
+        flickSensitivity.integerValue = interceptor.flickSensitivity
+        flickSensitivityValue.stringValue = "\(interceptor.flickSensitivity)%"
     }
 
     private func refreshSwipeStatus() {
@@ -240,6 +264,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func toggleDragToSwitch() {
         interceptor.setDragToSwitch(dragToSwitch.state == .on)
+        refreshFlickSensitivity()
+    }
+
+    @objc private func changeFlickSensitivity() {
+        interceptor.setFlickSensitivity(flickSensitivity.integerValue)
+        refreshFlickSensitivity()
     }
 
     @objc private func changeSpeed() {
