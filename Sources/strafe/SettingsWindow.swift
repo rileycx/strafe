@@ -34,7 +34,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private var recorders: [ShortcutAction: ShortcutRecorder] = [:]
     private var recordingAction: ShortcutAction?
     private let enableShortcuts = NSButton(checkboxWithTitle: "Enable keyboard shortcuts", target: nil, action: nil)
-    private let speed = NSPopUpButton(frame: .zero, pullsDown: false)
+    private static let speedPresets = TransitionSpeed.allCases
+    private let speed = NSSlider()
+    private let speedValue = NSTextField(labelWithString: "")
     private let dragToSwitch = NSButton(checkboxWithTitle: "Drag to switch Spaces", target: nil, action: nil)
     private let flickSensitivity = NSSlider(
         value: Double(SwipeInterceptor.defaultFlickSensitivity),
@@ -136,15 +138,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let transitions = NSTextField(labelWithString: "Space transitions")
         transitions.font = .systemFont(ofSize: 16, weight: .semibold)
         stack.addArrangedSubview(transitions)
-        for preset in TransitionSpeed.allCases {
-            speed.addItem(withTitle: preset.title)
-            speed.lastItem?.tag = preset.rawValue
-        }
         speed.target = self
         speed.action = #selector(changeSpeed)
         speed.isEnabled = engine != nil
         speed.setAccessibilityLabel("Transition speed for swipes and keyboard shortcuts")
-        stack.addArrangedSubview(NSStackView(views: [NSTextField(labelWithString: "Transition speed"), speed]))
+        speed.minValue = 0
+        speed.maxValue = Double(Self.speedPresets.count - 1)
+        speed.numberOfTickMarks = Self.speedPresets.count
+        speed.allowsTickMarkValuesOnly = true
+        speedValue.alignment = .right
+        speedValue.widthAnchor.constraint(equalToConstant: 130).isActive = true
+        let speedRow = NSStackView(views: [NSTextField(labelWithString: "Transition speed"), speed, speedValue])
+        speedRow.spacing = 8
+        stack.addArrangedSubview(speedRow)
+        speedRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         let speedHelp = NSTextField(wrappingLabelWithString: "Applies to shortcuts, swipes, and the end of a drag.")
         speedHelp.font = .systemFont(ofSize: 12)
         speedHelp.textColor = .secondaryLabelColor
@@ -195,7 +202,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             recorder.title = recorder.recording ? "Type shortcut… (Esc cancels)" : (action.storedShortcut?.displayName ?? "Record Shortcut…")
         }
         if let error = hotkeys.registrationError { message.stringValue = error }
-        speed.selectItem(withTag: (engine?.transitionSpeed ?? TransitionSpeed.stored).rawValue)
+        let selected = engine?.transitionSpeed ?? TransitionSpeed.stored
+        speed.integerValue = Self.speedPresets.firstIndex(of: selected) ?? 0
+        speedValue.stringValue = selected.title
         refreshSwipeStatus()
     }
 
@@ -273,10 +282,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func changeSpeed() {
-        guard let tag = speed.selectedItem?.tag else { return }
-        let selected = TransitionSpeed.from(rawValue: tag)
+        let selected = Self.speedPresets[speed.integerValue]
+        speedValue.stringValue = selected.title
+        guard let engine, engine.transitionSpeed != selected else { return }
         selected.persist()
-        engine?.setTransitionSpeed(selected)
+        engine.setTransitionSpeed(selected)
     }
 
     func windowDidResignKey(_ notification: Notification) { cancelRecording() }

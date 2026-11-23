@@ -168,10 +168,10 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
 - **Menu bar** — click the strafe icon to enable/disable interception, check
   whether swipe interception is actually active, and see which version you're running
   and where to get a newer one.
-- **Transition speed** *(Settings › Space transitions, or menu bar › Transition speed)*
-  — applies to keyboard shortcuts, timed trackpad swipes, and the release
-  animation in **Drag to switch Spaces**. The preset sets the pace for the
-  remaining distance, not for movement while your fingers are down.
+- **Transition speed** — use the slider in **Settings › Space transitions**
+  to select one of seven presets, from **Instant** to **~300 ms**. The same
+  presets are available in the menu bar. The speed applies to shortcuts,
+  timed swipes, and the remaining distance after you release a drag.
 
   | preset | approx. switch time | what it is |
   | --- | --- | --- |
