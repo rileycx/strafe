@@ -127,15 +127,18 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
         }
 
         let sign: Double = direction == .right ? 1.0 : -1.0
-        let steps = TransitionSpeed.rampSteps
+        // Keep the short presets' sampling, but don't stretch eight updates
+        // across a slow ramp. Aim for at least one update per 120 Hz frame.
+        let steps = max(TransitionSpeed.rampSteps, Int((rampMs * 120 / 1_000).rounded(.up)))
         let peak = TransitionSpeed.rampPeakProgress
         let endVelocity = TransitionSpeed.rampEndVelocity
-        let perStep = UInt32((rampMs / Double(steps)) * 1000.0)   // µs
+        let stepNanos = UInt64(rampMs * 1_000_000 / Double(steps))
 
         rampQueue.async {
             // began: at rest. The motion in the `changed` stream below is what
             // makes the WindowServer animate instead of jumping.
             _ = strafe_post_dock_swipe_phase(strafe_gesture_phase_began(), 0.0, 0.0)
+            let start = DispatchTime.now().uptimeNanoseconds
             for step in 1...steps {
                 let frac = Double(step) / Double(steps)
                 _ = strafe_post_dock_swipe_phase(
@@ -143,7 +146,13 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
                     sign * peak * frac,
                     sign * endVelocity * frac
                 )
-                if perStep > 0 { usleep(perStep) }
+                // Sleep to a fixed deadline so posting and wake-up overhead
+                // don't accumulate across the ramp.
+                let deadline = start + UInt64(step) * stepNanos
+                let now = DispatchTime.now().uptimeNanoseconds
+                if now < deadline {
+                    usleep(UInt32((deadline - now + 999) / 1_000))
+                }
             }
             // ended: a moderate velocity commits the switch with its animation.
             _ = strafe_post_dock_swipe_phase(

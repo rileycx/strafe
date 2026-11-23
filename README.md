@@ -176,6 +176,10 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   from the CLI, run `strafe speed 150`, `strafe speed 200`, `strafe speed 250`,
   or `strafe speed 300`.
 
+  These presets play a timed animation; the desktop does not follow your
+  fingers. For the native trackpad feel, choose **Disable** in the menu bar.
+  Trackpad swipes then go straight to macOS, and strafe shortcuts still work.
+
 - **Hide from menu bar** *(menu bar › Hide from menu bar)* — hide the strafe
   icon from the menu bar. The app keeps running: swipes and shortcuts still work.
   To get the icon back, open strafe again. The icon also returns on every fresh
