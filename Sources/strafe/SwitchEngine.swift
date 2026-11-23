@@ -29,6 +29,17 @@ protocol SwitchEngine {
     func switchSpace(_ direction: SwitchDirection) throws
 }
 
+struct DragContinuation {
+    let progress: Double
+    let travel: Double
+    let location: CGPoint
+}
+
+protocol DragSwitchEngine: SwitchEngine {
+    var hasPendingRamp: Bool { get }
+    func finishDrag(_ drag: DragContinuation, toward direction: SwitchDirection?) throws
+}
+
 /// No-op engine used during development, tests, and dry runs. Logs the
 /// requested switch and returns. Kept around as a safe stand-in for the real
 /// engine (e.g. when Accessibility isn't granted, or in unit tests).
@@ -49,7 +60,7 @@ struct StubSwitchEngine: SwitchEngine {
 /// state is guarded by an `NSLock`, so the type is safe to share across those
 /// contexts; the actual CGEvent posting (`strafe_post_switch_gesture`) is a
 /// stateless C call.
-final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
+final class GestureSwitchEngine: DragSwitchEngine, @unchecked Sendable {
     /// Gesture velocity magnitude. 2000.0 is the "Instant" preset — the only
     /// value that truly skips the slide animation (SPEC §1.4, §5). Lower values
     /// keep a (shortened) animation.
@@ -77,6 +88,9 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
     private let rampQueue = DispatchQueue(
         label: "com.rileycx.strafe.ramp", qos: .userInteractive
     )
+    private let pendingRamps = DispatchGroup()
+
+    var hasPendingRamp: Bool { pendingRamps.wait(timeout: .now()) == .timedOut }
 
     init(velocity: Double = GestureSwitchEngine.instantVelocity,
          spaceInfo: @escaping @Sendable () -> StrafeInfo? = {
@@ -128,49 +142,86 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
     /// `CGEventCreate`, while a ramp is handed to `rampQueue` and returns true
     /// immediately. Either way the caller's optimistic prediction update is
     /// correct, because that models where we are going, not where we are.
-    private func post(_ direction: SwitchDirection, speed: TransitionSpeed, spaceCount: UInt32?) -> Bool {
+    private func post(_ direction: SwitchDirection, speed: TransitionSpeed, spaceCount: UInt32?,
+                      continuing drag: DragContinuation?) -> Bool {
+        if let drag {
+            postDrag(drag, toward: direction, speed: speed)
+            return true
+        }
         guard let rampMs = speed.rampMilliseconds else {
+            if hasPendingRamp {
+                rampQueue.async(group: pendingRamps) { [velocity] in
+                    _ = strafe_post_switch_gesture(direction.cDirection, velocity)
+                }
+                return true
+            }
             return strafe_post_switch_gesture(direction.cDirection, velocity)
         }
 
         let sign: Double = direction == .right ? 1.0 : -1.0
-        // Keep the short presets' sampling, but don't stretch eight updates
-        // across a slow ramp. Aim for at least one update per 120 Hz frame.
-        let steps = max(TransitionSpeed.rampSteps, Int((rampMs * 120 / 1_000).rounded(.up)))
-        let travel = sign * Self.adjacentSpaceTravel(spaceCount: spaceCount)
-        let stepNanos = UInt64(rampMs * 1_000_000 / Double(steps))
-
-        rampQueue.async {
-            // began: at rest. The motion in the `changed` stream below is what
-            // makes the WindowServer animate instead of jumping.
-            _ = strafe_post_dock_swipe_phase(strafe_gesture_phase_began(), 0.0, 0.0)
-            let start = DispatchTime.now().uptimeNanoseconds
-            for step in 1...steps {
-                let frac = Double(step) / Double(steps)
-                let eased = frac * frac * (3.0 - 2.0 * frac)
-                _ = strafe_post_dock_swipe_phase(
-                    strafe_gesture_phase_changed(),
-                    travel * eased,
-                    0.0
-                )
-                // Sleep to a fixed deadline so posting and wake-up overhead
-                // don't accumulate across the ramp.
-                let deadline = start + UInt64(step) * stepNanos
-                let now = DispatchTime.now().uptimeNanoseconds
-                if now < deadline {
-                    usleep(UInt32((deadline - now + 999) / 1_000))
-                }
-            }
-            // Dock feeds release velocity into its spring. We already drove
-            // the slide to the target, so end at rest instead of adding a kick.
-            _ = strafe_post_dock_swipe_phase(
-                strafe_gesture_phase_ended(), travel, 0.0
-            )
-        }
+        postRamp(from: 0, to: sign * Self.adjacentSpaceTravel(spaceCount: spaceCount),
+                 duration: rampMs, ending: strafe_gesture_phase_ended(), location: nil)
         return true
     }
 
+    func finishDrag(_ drag: DragContinuation, toward direction: SwitchDirection?) throws {
+        if let direction {
+            try switchSpace(direction, continuing: drag)
+        } else {
+            postDrag(drag, toward: nil, speed: transitionSpeed)
+        }
+    }
+
+    private func postDrag(_ drag: DragContinuation, toward direction: SwitchDirection?, speed: TransitionSpeed) {
+        let target = direction.map { $0 == .right ? drag.travel : -drag.travel } ?? 0
+        let remaining = min(1, abs(target - drag.progress) / drag.travel)
+        let duration = (speed.rampMilliseconds ?? 0) * remaining
+        let phase = direction == nil ? strafe_gesture_phase_cancelled() : strafe_gesture_phase_ended()
+        postRamp(from: drag.progress, to: target, duration: duration, ending: phase, location: drag.location)
+    }
+
+    private func postRamp(from start: Double, to target: Double, duration: Double,
+                          ending phase: Int64, location: CGPoint?) {
+        // Preserve the old short-preset sampling for a full slide, and use
+        // roughly 120 Hz for a partial slide, including sub-frame finishes.
+        let minimumSteps = location == nil ? TransitionSpeed.rampSteps : 1
+        let steps = max(minimumSteps, Int((duration * 120 / 1_000).rounded(.up)))
+        let stepNanos = UInt64(duration * 1_000_000 / Double(steps))
+        rampQueue.async(group: pendingRamps) {
+            func emit(at point: UnsafePointer<CGPoint>?) {
+                // A real finger drag has already sent began. Reusing that
+                // gesture instead of starting another one avoids a jump to zero.
+                if point == nil {
+                    _ = strafe_post_dock_swipe_phase(strafe_gesture_phase_began(), 0, nil)
+                }
+                let startTime = DispatchTime.now().uptimeNanoseconds
+                let distance = target - start
+                for step in 1...steps {
+                    let fraction = Double(step) / Double(steps)
+                    let eased = fraction * fraction * (3 - 2 * fraction)
+                    _ = strafe_post_dock_swipe_phase(strafe_gesture_phase_changed(), start + distance * eased, point)
+                    // Fixed deadlines keep posting and wake-up overhead from accumulating.
+                    let deadline = startTime + UInt64(step) * stepNanos
+                    let now = DispatchTime.now().uptimeNanoseconds
+                    if now < deadline {
+                        usleep(UInt32((deadline - now + 999) / 1_000))
+                    }
+                }
+                _ = strafe_post_dock_swipe_phase(phase, target, point)
+            }
+            if let location {
+                withUnsafePointer(to: location) { emit(at: $0) }
+            } else {
+                emit(at: nil)
+            }
+        }
+    }
+
     func switchSpace(_ direction: SwitchDirection) throws {
+        try switchSpace(direction, continuing: nil)
+    }
+
+    private func switchSpace(_ direction: SwitchDirection, continuing drag: DragContinuation?) throws {
         // Read live topology once. If CGS symbols are unavailable we can't do
         // bounds/prediction bookkeeping — fall back to posting unconditionally.
         if let info = spaceInfo() {
@@ -183,17 +234,22 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
             let current = predictions[displayID] ?? info.currentIndex
 
             // Bounds guard (SPEC §2.4): never swipe past the first/last space.
-            if direction == .left {
-                if current == 0 { lock.unlock(); throw SwitchEngineError.atEdge }
-            } else {
-                if current + 1 >= info.spaceCount { lock.unlock(); throw SwitchEngineError.atEdge }
+            let atEdge = direction == .left ? current == 0 : current + 1 >= info.spaceCount
+            if atEdge {
+                let shape = speed
+                lock.unlock()
+                if let drag {
+                    postDrag(drag, toward: nil, speed: shape)
+                    return
+                }
+                throw SwitchEngineError.atEdge
             }
 
             let target: UInt32 = direction == .left ? current - 1 : current + 1
             let shape = speed
             lock.unlock()
 
-            guard post(direction, speed: shape, spaceCount: info.spaceCount) else {
+            guard post(direction, speed: shape, spaceCount: info.spaceCount, continuing: drag) else {
                 throw SwitchEngineError.postFailed
             }
 
@@ -202,7 +258,7 @@ final class GestureSwitchEngine: SwitchEngine, @unchecked Sendable {
             predictions[displayID] = target
             lock.unlock()
         } else {
-            guard post(direction, speed: transitionSpeed, spaceCount: nil) else {
+            guard post(direction, speed: transitionSpeed, spaceCount: nil, continuing: drag) else {
                 throw SwitchEngineError.postFailed
             }
         }

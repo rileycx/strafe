@@ -139,7 +139,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         speed.isEnabled = engine != nil
         speed.setAccessibilityLabel("Transition speed for swipes and keyboard shortcuts")
         stack.addArrangedSubview(NSStackView(views: [NSTextField(labelWithString: "Transition speed"), speed]))
-        let speedHelp = NSTextField(wrappingLabelWithString: "Applies to keyboard shortcuts and timed trackpad swipes.")
+        let speedHelp = NSTextField(wrappingLabelWithString: "Applies to shortcuts, swipes, and the end of a drag.")
         speedHelp.font = .systemFont(ofSize: 12)
         speedHelp.textColor = .secondaryLabelColor
         stack.addArrangedSubview(speedHelp)
@@ -155,7 +155,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         dragToSwitch.target = self
         dragToSwitch.action = #selector(toggleDragToSwitch)
         stack.addArrangedSubview(dragToSwitch)
-        let dragHelp = NSTextField(wrappingLabelWithString: "Follow your fingers and release at or past halfway to switch. Uses the macOS animation.")
+        let dragHelp = NSTextField(wrappingLabelWithString: "Hold to preview. Release at or past halfway, or flick to switch.")
         dragHelp.font = .systemFont(ofSize: 12)
         dragHelp.textColor = .secondaryLabelColor
         stack.addArrangedSubview(dragHelp)

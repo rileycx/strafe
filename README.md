@@ -150,8 +150,8 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   Swipe left/right between Spaces. The default is Instant.
   To preview the next Space without switching, enable **Drag to switch Spaces**
   in **Settings › Trackpad gestures**. Hold three fingers down to move the
-  desktop. Release at or past halfway to switch; release before halfway
-  to return to the current Space.
+  desktop without switching. Release at or past halfway, or flick, to switch.
+  A slow release before halfway returns to the current Space.
 - **Keyboard** — `ctrl`+`opt`+`←` and `ctrl`+`opt`+`→` switch Spaces by default.
   Open **Settings…** from the menu-bar icon to record a shortcut for each
   direction. Use Command, Control, or Option with a key, or a function key;
@@ -166,8 +166,9 @@ This update was tested on macOS 27.0; older macOS versions have not been reteste
   whether swipe interception is actually active, and see which version you're running
   and where to get a newer one.
 - **Transition speed** *(Settings › Space transitions, or menu bar › Transition speed)*
-  — applies to keyboard shortcuts and timed trackpad swipes, not
-  **Drag to switch Spaces**. If instant is too abrupt, choose an animation:
+  — applies to keyboard shortcuts, timed trackpad swipes, and the release
+  animation in **Drag to switch Spaces**. The preset sets the pace for the
+  remaining distance, not for movement while your fingers are down.
 
   | preset | approx. switch time | what it is |
   | --- | --- | --- |

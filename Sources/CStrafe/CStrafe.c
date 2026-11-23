@@ -99,16 +99,14 @@ bool strafe_posted_sign_reversed(void) {
     return strafe_uses_iohid_payload() && natural_scrolling_enabled();
 }
 
-static CGEventRef create_dock_swipe(CGSGesturePhase phase, double progress,
-                                    double velocity, bool augmented, CGEventRef original) {
-    // Copy the native event on the legacy path. Start fresh on the augmented
-    // path so the new phase cannot disagree with an existing raw HID payload.
-    CGEventRef ev = original && !augmented ? CGEventCreateCopy(original) : CGEventCreate(NULL);
-    if (!ev) return NULL;
-    if (original && augmented) {
-        CGEventSetLocation(ev, CGEventGetLocation(original));
-        CGEventSetTimestamp(ev, CGEventGetTimestamp(original));
-    }
+static bool post_dock_swipe_shaped(CGSGesturePhase phase, double progress,
+                                   double velocity, const CGPoint *location) {
+    const bool augmented = strafe_uses_iohid_payload();
+    // Keep the caller-facing sign stable: positive means the Space on the right.
+    if (strafe_posted_sign_reversed()) { progress = -progress; velocity = -velocity; }
+    CGEventRef ev = CGEventCreate(NULL);
+    if (!ev) return false;
+    if (location) CGEventSetLocation(ev, *location);
     CGEventSetIntegerValueField(ev, kCGSEventTypeField,            kCGSEventDockControl);
     CGEventSetIntegerValueField(ev, kCGEventGestureHIDType,        kIOHIDEventTypeDockSwipe);
     CGEventSetIntegerValueField(ev, kCGEventGesturePhase,          phase);
@@ -116,25 +114,15 @@ static CGEventRef create_dock_swipe(CGSGesturePhase phase, double progress,
     CGEventSetIntegerValueField(ev, kCGEventGestureSwipeMotion,    kCGGestureMotionHorizontal);
     CGEventSetDoubleValueField (ev, kCGEventGestureSwipeVelocityX, velocity);
     CGEventSetDoubleValueField (ev, kCGEventGestureSwipeVelocityY, augmented ? 0 : velocity);
-    if (original || augmented) {
-        CGEventSetIntegerValueField(ev, kCGEventGesturePhaseAlias, phase);
-    }
-    if (!augmented) return ev;
-    CGEventSetDoubleValueField(ev, kCGEventGestureZoomDeltaY, 3.0);
-    CGEventSetDoubleValueField(ev, kCGEventGestureSwipePositionX, 0.1);
-    CGEventRef replacement = strafe_create_augmented_event(ev);
-    CFRelease(ev);
-    return replacement;
-}
-
-static bool post_dock_swipe_shaped(CGSGesturePhase phase, double progress, double velocity) {
-    const bool augmented = strafe_uses_iohid_payload();
-    // Keep the caller-facing sign stable: positive means the Space on the right.
-    if (strafe_posted_sign_reversed()) { progress = -progress; velocity = -velocity; }
-    CGEventRef ev = create_dock_swipe(phase, progress, velocity, augmented, NULL);
-    if (!ev) return false;
     CGEventRef companion = NULL;
     if (augmented) {
+        CGEventSetIntegerValueField(ev, kCGEventGesturePhaseAlias, phase);
+        CGEventSetDoubleValueField(ev, kCGEventGestureZoomDeltaY, 3.0);
+        CGEventSetDoubleValueField(ev, kCGEventGestureSwipePositionX, 0.1);
+        CGEventRef replacement = strafe_create_augmented_event(ev);
+        CFRelease(ev);
+        if (!replacement) return false;
+        ev = replacement;
         companion = CGEventCreate(NULL);
         if (!companion) { CFRelease(ev); return false; }
         CGEventSetIntegerValueField(companion, kCGSEventTypeField, kCGSEventGesture);
@@ -161,7 +149,7 @@ static bool post_dock_swipe(CGSGesturePhase phase, StrafeDirection direction, do
     const double vel = augmented && phase != kCGSGesturePhaseEnded
         ? 0.0 : (isRight ? velocity : -velocity);
 
-    return post_dock_swipe_shaped(phase, progress, vel);
+    return post_dock_swipe_shaped(phase, progress, vel, NULL);
 }
 
 bool strafe_post_switch_gesture(StrafeDirection direction, double velocity) {
@@ -172,13 +160,8 @@ bool strafe_post_switch_gesture(StrafeDirection direction, double velocity) {
         && post_dock_swipe(kCGSGesturePhaseEnded,   direction, velocity);
 }
 
-// One phase with caller-chosen progress and velocity, for the animated
-// Transition speed presets (SPEC §1.4). A began, then a `changed` stream whose
-// progress climbs, then an ended is what makes the WindowServer run its slide
-// instead of flicking. The instant preset does not use this — it still goes
-// through `strafe_post_switch_gesture` above, unchanged.
-bool strafe_post_dock_swipe_phase(int64_t phase, double progress, double velocity) {
-    return post_dock_swipe_shaped((CGSGesturePhase)phase, progress, velocity);
+bool strafe_post_dock_swipe_phase(int64_t phase, double progress, const CGPoint *location) {
+    return post_dock_swipe_shaped((CGSGesturePhase)phase, progress, 0.0, location);
 }
 
 // --- Topology (SPEC §6) ---------------------------------------------------
@@ -326,11 +309,6 @@ void strafe_clear_swipe_motion(CGEventRef event) {
     CGEventSetDoubleValueField(event, kCGEventGestureSwipeProgress, 0);
     CGEventSetDoubleValueField(event, kCGEventGestureSwipeVelocityX, 0);
     CGEventSetDoubleValueField(event, kCGEventGestureSwipeVelocityY, 0);
-}
-
-CGEventRef strafe_create_cancelled_swipe(CGEventRef original) {
-    return create_dock_swipe(kCGSGesturePhaseCancelled, 0.0, 0.0,
-                             strafe_uses_iohid_payload(), original);
 }
 
 // --- Constants (SPEC §1.3) ------------------------------------------------

@@ -42,8 +42,6 @@ bool strafe_uses_iohid_payload(void);
 bool strafe_posted_sign_reversed(void);
 bool strafe_event_moves_right(double progressOrVelocity);
 void strafe_clear_swipe_motion(CGEventRef event);
-// Replace a real swipe's release with a no-motion cancellation.
-CGEventRef strafe_create_cancelled_swipe(CGEventRef original) CF_RETURNS_RETAINED;
 
 // --- Synthesis (SPEC §1.4, §1.5) ------------------------------------------
 // Post one instant single-step dock swipe: began -> changed -> ended, all
@@ -52,12 +50,9 @@ CGEventRef strafe_create_cancelled_swipe(CGEventRef original) CF_RETURNS_RETAINE
 // (default 2000.0 == "instant"); sign is applied internally from `direction`.
 bool strafe_post_switch_gesture(StrafeDirection direction, double velocity);
 
-// Post ONE phase of a horizontal dock swipe with an explicit progress and
-// velocity, to the same tap. Used only by the animated Transition speed
-// presets, which post a began -> ramped `changed` stream -> ended sequence
-// (SPEC §1.4); the instant preset uses the function above. Returns false only
-// if the event could not be created.
-bool strafe_post_dock_swipe_phase(int64_t phase, double progress, double velocity);
+// Post one animated phase, optionally pinned to the real gesture's location.
+// Progress carries the direction; the animation ends without a velocity kick.
+bool strafe_post_dock_swipe_phase(int64_t phase, double progress, const CGPoint *location);
 
 // --- Topology (SPEC §6) ---------------------------------------------------
 // Fill `outInfo` for the display under the cursor. Returns false if the CGS

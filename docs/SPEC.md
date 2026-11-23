@@ -309,12 +309,17 @@ if (eventType == kCGSEventGesture && swipeTracking) {
   if no nonzero-progress `changed` was seen.
 
 **Optional drag mode.** The tap forwards the real gesture while the fingers
-stay down, including reversals and companion events. At release it checks the
-last `changed` progress against half of the adjacent Space's travel. A release
-before halfway is replaced with a stationary `cancelled` event, including a
-matching IOHID payload on macOS 27. Otherwise the real release goes through.
-Dock renders the drag and settles it; transition speed presets do not time this
-path.
+stay down, including reversals and companion events. On release, half of the
+adjacent Space's travel commits a switch. A recent same-direction flick also
+commits if projected travel reaches halfway; pausing or reversing below
+halfway cancels.
+
+The tap suppresses the real release. The engine continues that gesture from
+its last position, at the original location and without posting another
+`began`. It applies the selected preset in proportion to the remaining
+distance, then posts `ended` at the destination or `cancelled` at the origin.
+If a ramp is already in flight, the next gesture doesn't open another live
+preview; a qualifying release queues a regular switch behind the ramp.
 
 ### 2.4 Elastic-rebound handling (repo issue #65 context — issue not publicly
 resolvable via API; behavior is addressed in code as follows)
